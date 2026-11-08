@@ -1,16 +1,20 @@
-# Healthy Football ⚽🏃
+# Pulse Coach 🫀🏋️
 
-Persönliches Trainings-Dashboard für **Laufen und Fussball**. Die App läuft auf GitHub Pages, funktioniert im Browser und auf dem Handy (als installierbare App) und
+Dein persönlicher Trainings-Coach. Du sagst ihm, was du willst (mehr Ausdauer, mehr Kraft, ein Ziel mit Datum), er plant deine Woche um deine Fixtermine herum. Die App läuft auf GitHub Pages, funktioniert im Browser und auf dem iPhone als installierbare App im iOS-Stil, und sie
 
 - übernimmt **Läufe, Trainings und Gesundheitsdaten automatisch von Garmin Connect** (alle 3 Stunden),
-- lässt dich **zusätzliche Trainings erfassen** (Fussballtraining, Matches, Kraft …) und Garmin-Aktivitäten ergänzen (RPE, Gefühl, Notizen, Sportart),
-- hat ein **Kraft-Logbuch**: Übung aus der Liste wählen, Sätze mit kg × Wiederholungen eintragen, «Letztes Mal» sehen, Fortschritt (geschätztes 1RM) in den Trends; eigene Übungen in den Einstellungen,
-- kennt deine **Ziele** (z.B. Ausdauer, Kraft, Matchfitness, messbare Ziele mit Datum, Saisonphase) und gibt auf Wunsch **Ernährungs-Faustregeln** vor/nach Training und Match,
-- lässt **Claude** auf Knopfdruck alles analysieren: Tagesform, Belastung, Tipps fürs Laufen und für Fussball-Fitness, einen 7-Tage-Plan und Antworten auf deine Fragen.
+- lässt dich **zusätzliche Trainings erfassen** und Garmin-Aktivitäten ergänzen (RPE, Gefühl, Notizen, Sportart),
+- hat einen **Plan-Reiter**: die nächsten 7 Tage mit deinen **Fixterminen** (wöchentlich, einmalig oder «keine Zeit») und den Einheiten, die der Coach darum herum plant,
+- führt **Bestwerte** (1RM, 3RM oder beliebige Wiederholungszahl) mit Verlauf und Prozenttabelle. Neue Rekorde aus deinen Trainings schlägt sie dir automatisch vor,
+- hat ein **Kraft-Logbuch** mit über 60 Übungen inkl. Gewichtheben (Snatch, Clean & Jerk …): Sätze mit kg × Wiederholungen, «Letztes Mal», Fortschritt in den Trends,
+- kennt deinen **Auftrag**: Freitext plus Schwerpunkt-Regler (Ausdauer, Kraft, Schnelligkeit, Beweglichkeit, Gewicht), messbare Ziele mit Datum, auf Wunsch **Ernährungs-Faustregeln**,
+- lässt **Claude** auf Knopfdruck alles analysieren: Tagesform, Belastung, Tipps nach deinen Schwerpunkten, einen 7-Tage-Plan mit Kraftgewichten in % deines 1RM und Antworten auf deine Fragen.
+
+**Fussball** ist ein optionales Modul (Einstellungen → Module): Es blendet Match-Felder, Position, Liga, Saisonphase und das Ziel «Matchfitness» ein.
 
 Ohne Einrichtung startet die App im **Demo-Modus** mit Beispieldaten.
 
-> **Selbst nutzen?** Folge der Schritt-für-Schritt-Anleitung in [SETUP.md](SETUP.md). Mit Claude Code reicht: *«Lies SETUP.md und richte mir Healthy Football ein.»*
+> **Selbst nutzen?** Folge der Schritt-für-Schritt-Anleitung in [SETUP.md](SETUP.md). Mit Claude Code reicht: *«Lies SETUP.md und richte mir Pulse Coach ein.»*
 
 ## Architektur
 
@@ -31,7 +35,7 @@ Es gibt keinen eigenen Server: GitHub übernimmt Hosting, Speicher und Rechenzei
 |---|---|---|
 | `data/garmin.json` | Workflow *Garmin Sync* | Aktivitäten, Tageswerte (Ruhepuls, HRV, Schlaf, Body Battery, Stress, Schritte), VO₂max, Readiness, Wettkampfprognosen |
 | `data/manual.json` | App | Manuell erfasste Trainings und Ergänzungen zu Garmin-Aktivitäten |
-| `data/profile.json` | App | Dein Profil (Position, Ziele, Verletzungen, feste Termine) |
+| `data/profile.json` | App | Dein Profil (Ziele, Fixtermine, Bestwerte, Verletzungen, Module) |
 | `data/question.json` | App (der Coach leert sie nach der Antwort) | Offene Frage an den Coach |
 | `data/insights.json` | Workflow *Coach Analyse* | Analyse, Tipps, 7-Tage-Plan, Fragen & Antworten |
 
@@ -117,7 +121,7 @@ Am Desktop: **Einstellungen → Setup-Link kopieren**, den Link an dich selbst s
 
 - **Öffentliches App-Repo**: Code, Workflows und Actions-Logs sind öffentlich, deine Daten nicht. Die Workflows schreiben keine Gesundheitsdaten in die Logs. Fragen an den Coach gehen deshalb über `data/question.json` im privaten Daten-Repo und nicht über die (öffentlich sichtbaren) Workflow-Eingaben. Wenn du eigene Workflow-Schritte ergänzt: keine Daten mit `print`/`echo` ausgeben.
 - **Geplante Workflows** deaktiviert GitHub nach 60 Tagen ohne Commit im App-Repo. Du bekommst dann eine E-Mail und kannst den Workflow mit einem Klick wieder aktivieren.
-- **Fussball mit der Uhr aufgezeichnet?** Garmin speichert das je nach Gerät als *Fussball*, *Cardio* oder *Andere*. Öffne die Aktivität in der App, klicke auf *Ergänzen* und stelle die Sportart auf Fussball. Das gilt dann auch für die Analyse.
+- **Fussball mit der Uhr aufgezeichnet?** (nur mit Fussball-Modul) Garmin speichert das je nach Gerät als *Fussball*, *Cardio* oder *Andere*. Öffne die Aktivität in der App, klicke auf *Ergänzen* und stelle die Sportart auf Fussball. Das gilt dann auch für die Analyse.
 - **Analyse-Logik**: `sync/coach.py` berechnet Kennzahlen (Session-RPE-Belastung, ACWR, Wochenumfänge, Pace-Entwicklung, Gesundheits-Trends) und schickt sie mit den Aktivitäten der letzten 42 Tage an Claude. Die Antwort kommt als strukturiertes JSON (`output_config.format`).
 - **Lokal entwickeln**: `python -m http.server -d web 8000` → <http://localhost:8000>. Den Coach-Prompt ohne API-Aufruf ansehen: `DRY_RUN=1 DATA_DIR=pfad/zu/data python sync/coach.py`.
 - Der Coach ersetzt keine medizinische Beratung. Lass Schmerzen und Verletzungen ärztlich abklären.

@@ -4,35 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <!-- Only our own scripts may run, and data may only go to the GitHub API (protects the token in localStorage). -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://api.github.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="no-referrer">
-  <meta name="description" content="Persönliches Trainings-Dashboard für Laufen und Fussball – mit Garmin-Sync und KI-Coach.">
-  <meta name="theme-color" content="#f5f6f2" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0c0e11" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="Dein persönlicher Trainings-Coach – mit Garmin-Sync, Wochenplan und KI-Analyse.">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Healthy Football">
-  <title>Healthy Football</title>
+  <meta name="apple-mobile-web-app-title" content="Pulse Coach">
+  <title>Pulse Coach</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon-180.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..800&family=Geist+Mono:wght@400..600&display=swap">
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
   <div class="app">
     <aside class="sidebar">
-      <a class="brand" href="#/heute"><span class="brand-mark">⚽</span><span>Healthy<b>Football</b></span></a>
+      <a class="brand" href="#/heute"><img class="brand-mark" src="icon.svg" alt="" width="32" height="32"><span>Pulse <b>Coach</b></span></a>
       <nav id="side-nav" class="side-nav" aria-label="Hauptnavigation"></nav>
       <button id="side-add" class="btn btn-primary btn-block" data-action="add"></button>
       <p id="side-status" class="side-status"></p>
     </aside>
 
     <header class="topbar">
-      <a class="brand-mark sm" href="#/heute" aria-label="Start">⚽</a>
       <span id="topbar-title" class="topbar-title"></span>
       <div id="topbar-actions" class="topbar-actions"></div>
     </header>
@@ -42,7 +39,7 @@
     <nav id="tabbar" class="tabbar" aria-label="Navigation"></nav>
   </div>
 
-  <dialog id="sheet" class="sheet" aria-label="Details"></dialog>
+  <dialog id="sheet" class="sheet" aria-label="Details" tabindex="-1"></dialog>
   <div id="tip" class="tip" role="tooltip" popover="manual"></div>
   <div id="toasts" class="toasts" aria-live="polite" popover="manual"></div>
   <noscript>Diese App benötigt JavaScript.</noscript>

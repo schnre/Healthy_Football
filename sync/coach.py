@@ -47,7 +47,8 @@ PLAN_ITEM = {
     "title": {"type": "string"},
     "durationMin": {"type": "integer"},
     "intensity": {"type": "string", "enum": ["Ruhe", "locker", "mittel", "hart"]},
-    "details": {"type": "string", "description": "Konkreter Ablauf, z.B. 10' einlaufen, 6x400m @4:15 oder Kniebeuge 3x5 @ 85 kg"},
+    "fixed": {"type": "boolean", "description": "true, wenn dieser Eintrag ein Fixtermin des Athleten ist (Titel und Sportart übernehmen)"},
+    "details": {"type": "string", "description": "Konkreter Ablauf, z.B. 10' einlaufen, 6x400m @4:15 oder Back Squat 3x5 @ 80 % (84 kg)"},
 }
 
 
@@ -93,7 +94,8 @@ def build_schema(nutrition: bool) -> dict:
         "warnings": {"type": "array", "items": {"type": "string"}, "description": "Nur echte Warnsignale, sonst leer"},
         "plan": {
             "type": "array",
-            "description": "Vorschlag für die nächsten 7 Tage ab heute, ein Eintrag pro Tag",
+            "description": "Plan für die nächsten 7 Tage ab heute: jeder Tag mindestens ein Eintrag (Ruhetag = type 'rest'), "
+                           "mehrere Einträge pro Tag erlaubt. Jeder Fixtermin erscheint als eigener Eintrag mit fixed=true.",
             "items": {"type": "object", "properties": plan_props, "required": list(plan_props), "additionalProperties": False},
         },
         "answer": {"type": "string", "description": "Antwort auf die Frage, leer wenn keine Frage"},
@@ -111,69 +113,102 @@ def build_schema(nutrition: bool) -> dict:
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
-FOCUS_LABELS = {
-    "endurance": "Ausdauer", "speed": "Schnelligkeit & Sprint", "strength": "Maximalkraft",
-    "hypertrophy": "Muskelaufbau", "weight_loss": "Gewicht reduzieren", "injury_prevention": "Verletzungsprävention",
-    "match_fitness": "Matchfitness", "general": "Allgemeine Fitness",
+# Focus sliders (keep in sync with AREAS / FOOTBALL_AREAS in web/js/training.js)
+AREA_LABELS = {
+    "endurance": "Ausdauer", "strength": "Kraft", "speed": "Schnelligkeit", "mobility": "Beweglichkeit",
+    "weight": "Gewicht / Körperzusammensetzung", "match_fitness": "Matchfitness (Fussball)",
+}
+WEIGHT_LABELS = ["kein Fokus", "nebenbei", "wichtig", "sehr wichtig", "Top-Priorität"]
+LEGACY_FOCUS = {
+    "endurance": ["endurance"], "speed": ["speed"], "strength": ["strength"], "hypertrophy": ["strength"],
+    "weight_loss": ["weight"], "injury_prevention": ["mobility"], "match_fitness": ["match_fitness"],
+    "general": ["endurance", "strength", "mobility"],
 }
 PHASE_LABELS = {"prep": "Vorbereitung", "season": "Saison", "offseason": "Pause", "none": "keine Saison"}
+WEEKDAY_LABELS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
 PRINCIPLES = """Grundsätze:
+- Die Schwerpunkte und der Freitext des Athleten sind dein Auftrag. Verteile Umfang und Qualität nach der Gewichtung:
+  Top-Priorität bekommt die meisten und wichtigsten Einheiten, "nebenbei" nur Erhaltung.
 - Beziehe dich auf konkrete Zahlen aus den Daten (Pace, Puls, Umfang, HRV, Schlaf, Belastung, Gewichte und Wiederholungen).
 - Berücksichtige Erholung: niedrige HRV, schlechter Schlaf, hoher Ruhepuls oder ACWR > 1.3 → Belastung reduzieren.
-- Feste Termine (z.B. Mannschaftstraining, Match) sind gesetzt. Keine harten Einheiten am Vortag eines Matches,
-  kein schweres Krafttraining innerhalb von 48 h vor einem Match.
-- Krafttraining: progressive Belastung anhand der erfassten Sätze. Nenne für die nächste Einheit konkrete Gewichte
-  und Wiederholungen (z.B. "Kniebeuge 3x5 @ 87.5 kg"), bei Stagnation Varianten oder Deload.
-- Der Wochenplan muss zu Trainingstagen, Zielen, Saisonphase und Einschränkungen passen.
-- Gib Intensitäten konkret an (Pace in min/km, Herzfrequenzbereiche, RPE oder kg x Wiederholungen).
+- Fixtermine sind gesetzt: übernimm jeden als eigenen Plan-Eintrag mit fixed=true (gleiche Sportart und gleicher Titel)
+  und ergänze in 'details', wie der Athlet ihn nutzen soll. Plane die übrigen Einheiten darum herum: keine harte Einheit
+  direkt vor oder nach einem harten Fixtermin, kein schweres Beintraining am Tag vor einer harten Lauf- oder Sprinteinheit.
+  An Tagen mit "keine Zeit" nur Ruhe oder höchstens 15 Minuten Mobility.
+- Krafttraining: progressive Belastung anhand der erfassten Sätze. Wenn Bestwerte (1RM/3RM …) vorhanden sind, gib die
+  Arbeitsgewichte als Prozent des 1RM mit kg in Klammern an (z.B. "Back Squat 5x3 @ 80 % (84 kg)"), auf 2.5 kg gerundet.
+  Fehlt ein 1RM, schätze es aus dem besten Mehrfach-Max (Epley) und sag, dass es geschätzt ist. Bei Stagnation Varianten oder Deload.
+- Der Wochenplan muss zu Trainingstagen, Zielen, Fixterminen und Einschränkungen passen.
+- Gib Intensitäten konkret an (Pace in min/km, Herzfrequenzbereiche, RPE, % 1RM oder kg x Wiederholungen).
 - Bei Schmerzen oder Verletzungsverdacht: zur ärztlichen Abklärung raten, keine Diagnose stellen.
-- Gliedere die Tipps in 2-4 Bereiche ('focus'), passend zu Zielen und Sportarten, den wichtigsten zuerst.
+- Gliedere die Tipps in 2-4 Bereiche ('focus') entlang der Schwerpunkte, den wichtigsten zuerst.
   Erholung/Prävention bekommt einen eigenen Bereich, sofern es etwas Relevantes gibt.
 - Schreibe auf Deutsch in Schweizer Rechtschreibung (ss statt ß), direkt und motivierend, in der Du-Form."""
+
+FOOTBALL_RULES = """Fussball (Modul vom Athleten aktiviert):
+- Mannschaftstrainings und Matches sind Fixtermine. Keine harten Einheiten am Vortag eines Matches,
+  kein schweres Krafttraining innerhalb von 48 h vor einem Match.
+- Berücksichtige Position, Niveau und Saisonphase; Matchfitness heisst wiederholte Sprints, Richtungswechsel und Erholung zwischen Belastungen."""
 
 NUTRITION_RULES = """Ernährung (vom Athleten aktiviert):
 - Gib alltagstaugliche FAUSTREGELN mit Beispielen für Lebensmittel – keine Grammrechnungen pro Mahlzeit, keine Kalorienpläne.
 - Stütze dich auf die Leitlinien: ACSM/Academy of Nutrition and Dietetics/Dietitians of Canada (2016) – Kohlenhydratbedarf
   steigt mit der Belastung, 1-4 h vor intensiven Einheiten kohlenhydratbetont und fett-/ballaststoffarm essen;
-  ISSN-Positionspapier Protein – Protein über den Tag verteilen, nach dem Training Protein + Kohlenhydrate;
-  UEFA-Expertenstatement zur Ernährung im Fussball (2021) – am Vortag und am Matchtag Kohlenhydrate betonen,
-  in der Halbzeit schnelle Kohlenhydrate, nach dem Match Regeneration, ausreichend trinken.
-- Richte die Tagesregeln nach der geplanten Einheit (hart/Match → mehr Kohlenhydrate, Ruhetag → ausgewogen).
+  ISSN-Positionspapier Protein – Protein über den Tag verteilen, nach dem Training Protein + Kohlenhydrate.
+- Richte die Tagesregeln nach der geplanten Einheit (hart → mehr Kohlenhydrate, Ruhetag → ausgewogen).
 - Berücksichtige Ernährungsform und Unverträglichkeiten. Bei Gewichtsziel nur ein moderates Defizit an leichten Tagen,
-  nie vor Matches oder harten Einheiten.
+  nie vor harten Einheiten oder Wettkämpfen.
 - Keine Supplement-Empfehlungen ausser gut belegten Basics (z.B. Koffein vor Wettkämpfen) mit Hinweis; keine medizinischen Aussagen."""
+NUTRITION_FOOTBALL = """- UEFA-Expertenstatement zur Ernährung im Fussball (2021): am Vortag und am Matchtag Kohlenhydrate betonen,
+  in der Halbzeit schnelle Kohlenhydrate, nach dem Match Regeneration, ausreichend trinken."""
 
 
 def normalize_profile(raw: dict) -> dict:
-    """Mirror of normalizeProfile() in web/js/training.js – old profiles stored goals as free text."""
+    """Mirror of normalizeProfile() in web/js/training.js – converts older goal and schedule formats."""
     p = dict(raw or {})
     goals = p.get("goals")
     if not isinstance(goals, dict):
-        p["goals"] = {"main": "", "secondary": [], "phase": "", "notes": goals or "",
-                      "targets": [{"text": p["raceGoal"], "date": ""}] if p.get("raceGoal") else []}
-    p.setdefault("nutrition", {})
+        goals = {"notes": goals or "", "targets": [{"text": p["raceGoal"], "date": ""}] if p.get("raceGoal") else []}
+    g = {"weights": {}, "targets": [], "notes": "", "phase": "", **goals}
+    if not g["weights"] and (g.get("main") or g.get("secondary")):
+        for k in g.get("secondary") or []:
+            for a in LEGACY_FOCUS.get(k, []):
+                g["weights"][a] = max(g["weights"].get(a, 0), 2)
+        for a in LEGACY_FOCUS.get(g.get("main"), []):
+            g["weights"][a] = 4
+    g.pop("main", None)
+    g.pop("secondary", None)
+    p["goals"] = g
+    p["nutrition"] = p.get("nutrition") or {}
+    p["modules"] = {"football": False, **(p.get("modules") or {})}
+    if isinstance(p.get("schedule"), str):
+        if p["schedule"].strip():
+            p["scheduleNote"] = p["schedule"]
+        p["schedule"] = None
+    p["schedule"] = {"recurring": [], "once": [], **(p.get("schedule") or {})}
+    p.setdefault("records", [])
     return p
 
 
 def build_system(profile: dict, sports: list[str]) -> str:
     g = profile["goals"]
+    football = profile["modules"].get("football")
     lines = []
-    if g.get("main"):
-        lines.append(f"- Hauptziel: {FOCUS_LABELS.get(g['main'], g['main'])}")
-    if g.get("secondary"):
-        lines.append("- Weitere Ziele: " + ", ".join(FOCUS_LABELS.get(k, k) for k in g["secondary"]))
-    if g.get("phase"):
+    weights = sorted(((k, w) for k, w in g["weights"].items() if w and (k != "match_fitness" or football)), key=lambda x: -x[1])
+    if weights:
+        lines.append("- Schwerpunkte (0-4): " + ", ".join(f"{AREA_LABELS.get(k, k)} = {WEIGHT_LABELS[min(int(w), 4)]}" for k, w in weights))
+    if football and g.get("phase"):
         lines.append(f"- Saisonphase: {PHASE_LABELS.get(g['phase'], g['phase'])}")
     for t in g.get("targets") or []:
         lines.append(f"- Messbares Ziel: {t['text']}" + (f" (bis {t['date']})" if t.get("date") else ""))
     if g.get("notes"):
-        lines.append(f"- Details: {g['notes']}")
+        lines.append(f"- In eigenen Worten: {g['notes']}")
     goals = "\n".join(lines) or "- Keine Ziele angegeben: leite sinnvolle Schwerpunkte aus den Sportarten und Daten ab."
 
-    text = f"""Du bist ein erfahrener Trainer und Sportwissenschaftler für Ausdauer-, Kraft- und Mannschaftssport.
-Du betreust eine einzelne Person (Hobby-/Amateursport), die ihre Garmin-Daten und zusätzlich erfasste Trainings
-(z.B. Mannschaftstraining, Matches, Krafttraining mit Sätzen, Gewichten und Wiederholungen) mit dir teilt.
+    text = f"""Du bist ein erfahrener persönlicher Trainer und Sportwissenschaftler für Ausdauer- und Krafttraining.
+Du betreust eine einzelne Person (Hobby-/Amateursport), die ihre Garmin-Daten, zusätzlich erfasste Trainings
+(z.B. Krafttraining mit Sätzen, Gewichten und Wiederholungen), Bestwerte und feste Termine mit dir teilt.
 
 Sportarten: {", ".join(sports) or "nicht angegeben"}
 Ziele:
@@ -183,9 +218,48 @@ Deine Aufgabe: Analysiere die Daten ehrlich und konkret und gib umsetzbare Empfe
 einzahlen – ohne Überlastung.
 
 {PRINCIPLES}"""
+    if football:
+        text += "\n\n" + FOOTBALL_RULES
     if profile["nutrition"].get("enabled"):
-        text += "\n\n" + NUTRITION_RULES
+        text += "\n\n" + NUTRITION_RULES + ("\n" + NUTRITION_FOOTBALL if football else "")
     return text
+
+
+def fixed_next_days(profile: dict, days: int = 7) -> list[dict]:
+    """Weekly and one-off appointments expanded to concrete dates for the planning window."""
+    out = []
+    for i in range(days):
+        d = date.today() + timedelta(days=i)
+        weekday = d.weekday() + 1  # 1 = Monday
+        for r in profile["schedule"]["recurring"]:
+            if int(r.get("weekday") or 0) == weekday:
+                out.append({"datum": d.isoformat(), "wochentag": WEEKDAY_LABELS[d.weekday()], "art": "wöchentlich",
+                            **{k: r[k] for k in ("time", "durationMin", "type", "title") if r.get(k)}})
+        for o in profile["schedule"]["once"]:
+            if o.get("date") == d.isoformat():
+                entry = {"datum": d.isoformat(), "wochentag": WEEKDAY_LABELS[d.weekday()],
+                         "art": "keine Zeit" if o.get("kind") == "blocked" else "einmalig"}
+                entry.update({k: o[k] for k in ("time", "durationMin", "type", "title") if o.get(k)})
+                out.append(entry)
+    return out
+
+
+def records_block(records: list[dict]) -> list[dict]:
+    """Best value per exercise and rep count, with the previous best for progress."""
+    best: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    for r in records:
+        if r.get("exId") and r.get("reps") and r.get("kg"):
+            best[(r["exId"], int(r["reps"]))].append(r)
+    out = []
+    for (_, reps), entries in sorted(best.items(), key=lambda x: (x[1][0].get("name", ""), x[0][1])):
+        entries.sort(key=lambda r: r.get("date", ""), reverse=True)
+        top = max(entries, key=lambda r: r["kg"])
+        item = {"übung": top.get("name"), "wiederholungen": reps, "kg": top["kg"], "datum": top.get("date")}
+        older = [r["kg"] for r in entries if r.get("date", "") < top.get("date", "")]
+        if older:
+            item["vorherBestKg"] = max(older)
+        out.append(item)
+    return out
 
 
 def day_offset(iso: str) -> int:
@@ -248,7 +322,7 @@ def strength_block(acts: list[dict]) -> dict:
             "hinweis": "1RM = geschätztes Maximalgewicht nach Epley"} if exercises else {}
 
 
-def compute_metrics(acts: list[dict], daily: list[dict]) -> dict:
+def compute_metrics(acts: list[dict], daily: list[dict], football: bool = False) -> dict:
     in_days = lambda lo, hi: [a for a in acts if a.get("date") and lo <= day_offset(a["date"]) < hi]
 
     acute = sum(session_load(a) for a in in_days(0, 7))
@@ -290,7 +364,7 @@ def compute_metrics(acts: list[dict], daily: list[dict]) -> dict:
         days = [d for d in daily if lo <= day_offset(d["date"]) < hi]
         return {k: avg([d.get(k) for d in days]) for k in ("restingHr", "hrv", "sleepH", "sleepScore", "bodyBatteryHigh", "stress")}
 
-    return {
+    metrics = {
         "belastung": {
             "akut7Tage": round(acute),
             "chronischProWoche28Tage": round(chronic_weekly),
@@ -299,10 +373,12 @@ def compute_metrics(acts: list[dict], daily: list[dict]) -> dict:
         },
         "wochen": weeks,
         "laufen": {"letzte28Tage": run_block(0, 28), "vorherige28Tage": run_block(28, 56)},
-        "fussball": {"letzte28Tage": football_block(0, 28), "vorherige28Tage": football_block(28, 56)},
         "kraft": strength_block(acts),
         "gesundheit": {"letzte7Tage": health_block(0, 7), "vorherige21Tage": health_block(7, 28)},
     }
+    if football:
+        metrics["fussball"] = {"letzte28Tage": football_block(0, 28), "vorherige28Tage": football_block(28, 56)}
+    return metrics
 
 
 def compact_activity(a: dict) -> dict:
@@ -321,10 +397,19 @@ def build_prompt(garmin: dict, manual: dict, profile: dict, previous: dict, ques
     recent_daily = [d for d in daily if day_offset(d["date"]) < 21]
     last = previous.get("analysis") or {}
 
+    football = bool(profile["modules"].get("football"))
+    hidden = {"goals", "customExercises", "raceGoal", "schedule", "records", "modules", "nutrition"}
+    if not football:
+        hidden |= {"position", "level"}
+    athlete = {k: v for k, v in profile.items() if k not in hidden and v not in (None, "", [], {})}
+    if profile["nutrition"].get("enabled"):
+        athlete["ernaehrung"] = {k: v for k, v in profile["nutrition"].items() if k != "enabled" and v}
     sections = {
-        "heute": f"{iso_today()} ({date.today().strftime('%A')})",
-        "athletenprofil": {k: v for k, v in profile.items() if k not in ("goals", "customExercises", "raceGoal")} or "nicht ausgefüllt",
-        "kennzahlen": compute_metrics(acts, daily),
+        "heute": f"{iso_today()} ({WEEKDAY_LABELS[date.today().weekday()]})",
+        "athletenprofil": athlete or "nicht ausgefüllt",
+        "fixtermineNaechste7Tage": fixed_next_days(profile) or "keine",
+        "bestwerte": records_block(profile["records"]) or "keine eingetragen",
+        "kennzahlen": compute_metrics(acts, daily, football),
         "garminSnapshot": garmin.get("snapshot", {}),
         "aktivitaetenLetzte42Tage": recent_acts,
         "gesundheitLetzte21Tage": recent_daily,
@@ -332,7 +417,8 @@ def build_prompt(garmin: dict, manual: dict, profile: dict, previous: dict, ques
                            "plan": last.get("plan")} if last else None,
     }
     prompt = "Hier sind meine aktuellen Daten als JSON:\n\n" + json.dumps(sections, ensure_ascii=False, indent=1)
-    prompt += "\n\nErstelle deine Analyse und den Plan für die nächsten 7 Tage (ab heute)."
+    prompt += ("\n\nErstelle deine Analyse und den Plan für die nächsten 7 Tage (ab heute). "
+               "Übernimm alle Fixtermine (fixed=true) und plane die übrigen Einheiten passend zu meinen Schwerpunkten darum herum.")
     if question:
         prompt += f"\n\nMeine Frage an dich (beantworte sie im Feld 'answer'):\n{question}"
     return prompt

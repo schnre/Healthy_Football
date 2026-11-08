@@ -1,13 +1,13 @@
 // Strength exercises, goals and nutrition options shared by the forms, detail views and trends.
 import { esc, icon, fmtDate, fmtNum } from './util.js';
 
-export const MUSCLE_GROUPS = ['Beine', 'Gesäss & Hüfte', 'Brust', 'Rücken', 'Schultern', 'Arme', 'Rumpf', 'Prävention & Sprung', 'Eigene'];
+export const MUSCLE_GROUPS = ['Beine', 'Gesäss & Hüfte', 'Gewichtheben', 'Brust', 'Rücken', 'Schultern', 'Arme', 'Rumpf', 'Prävention & Sprung', 'Eigene'];
 
 // unit 's' = timed exercise (seconds instead of repetitions); bw = usually bodyweight
 const ex = (id, name, group, extra = {}) => ({ id, name, group, ...extra });
 export const EXERCISES = [
-  ex('squat', 'Kniebeuge (Langhantel)', 'Beine'),
-  ex('front_squat', 'Frontkniebeuge', 'Beine'),
+  ex('squat', 'Back Squat (Kniebeuge)', 'Beine'),
+  ex('front_squat', 'Front Squat (Frontkniebeuge)', 'Beine'),
   ex('goblet_squat', 'Goblet Squat', 'Beine'),
   ex('leg_press', 'Beinpresse', 'Beine'),
   ex('lunge', 'Ausfallschritte', 'Beine'),
@@ -16,7 +16,7 @@ export const EXERCISES = [
   ex('leg_extension', 'Beinstrecker (Maschine)', 'Beine'),
   ex('leg_curl', 'Beinbeuger (Maschine)', 'Beine'),
   ex('calf_raise', 'Wadenheben', 'Beine'),
-  ex('deadlift', 'Kreuzheben', 'Gesäss & Hüfte'),
+  ex('deadlift', 'Deadlift (Kreuzheben)', 'Gesäss & Hüfte'),
   ex('romanian_deadlift', 'Rumänisches Kreuzheben', 'Gesäss & Hüfte'),
   ex('hip_thrust', 'Hip Thrust', 'Gesäss & Hüfte'),
   ex('glute_bridge', 'Glute Bridge', 'Gesäss & Hüfte', { bw: true }),
@@ -24,7 +24,15 @@ export const EXERCISES = [
   ex('good_morning', 'Good Morning', 'Gesäss & Hüfte'),
   ex('hip_adduction', 'Adduktoren (Maschine)', 'Gesäss & Hüfte'),
   ex('hip_abduction', 'Abduktoren (Maschine)', 'Gesäss & Hüfte'),
-  ex('bench_press', 'Bankdrücken', 'Brust'),
+  ex('snatch', 'Snatch', 'Gewichtheben'),
+  ex('power_snatch', 'Power Snatch', 'Gewichtheben'),
+  ex('clean', 'Clean', 'Gewichtheben'),
+  ex('power_clean', 'Power Clean', 'Gewichtheben'),
+  ex('clean_and_jerk', 'Clean & Jerk', 'Gewichtheben'),
+  ex('jerk', 'Jerk', 'Gewichtheben'),
+  ex('push_press', 'Push Press', 'Gewichtheben'),
+  ex('overhead_squat', 'Overhead Squat', 'Gewichtheben'),
+  ex('bench_press', 'Bankdrücken (Bench Press)', 'Brust'),
   ex('incline_bench', 'Schrägbankdrücken', 'Brust'),
   ex('db_bench', 'Kurzhantel-Bankdrücken', 'Brust'),
   ex('push_up', 'Liegestütze', 'Brust', { bw: true }),
@@ -63,30 +71,107 @@ export const EXERCISES = [
   ex('broad_jump', 'Standweitsprung', 'Prävention & Sprung', { bw: true }),
 ];
 
-export const FOCUS = {
-  endurance: 'Ausdauer',
-  speed: 'Schnelligkeit & Sprint',
-  strength: 'Maximalkraft',
-  hypertrophy: 'Muskelaufbau',
-  weight_loss: 'Gewicht reduzieren',
-  injury_prevention: 'Verletzungsprävention',
-  match_fitness: 'Matchfitness',
-  general: 'Allgemeine Fitness',
+// Focus areas the user weights with a slider (0 = no focus … 4 = top priority). Keep in sync with sync/coach.py.
+export const AREAS = {
+  endurance: { label: 'Ausdauer', emoji: '🫀' },
+  strength: { label: 'Kraft', emoji: '🏋️' },
+  speed: { label: 'Schnelligkeit', emoji: '⚡' },
+  mobility: { label: 'Beweglichkeit', emoji: '🧘' },
+  weight: { label: 'Gewicht', emoji: '⚖️' },
 };
+// only offered with the football module
+export const FOOTBALL_AREAS = { match_fitness: { label: 'Matchfitness', emoji: '⚽' } };
+export const WEIGHT_LABELS = ['Kein Fokus', 'Nebenbei', 'Wichtig', 'Sehr wichtig', 'Top-Priorität'];
 export const PHASES = { prep: 'Vorbereitung', season: 'Saison', offseason: 'Pause', none: 'Keine Saison' };
 export const DIETS = ['Alles', 'Vegetarisch', 'Vegan', 'Pescetarisch'];
+export const WEEKDAYS = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
 
-/** Profile with defaults; converts the old free-text goal fields. */
+// old goal keys → slider areas
+const LEGACY_FOCUS = {
+  endurance: ['endurance'], speed: ['speed'], strength: ['strength'], hypertrophy: ['strength'],
+  weight_loss: ['weight'], injury_prevention: ['mobility'], match_fitness: ['match_fitness'], general: ['endurance', 'strength', 'mobility'],
+};
+
+/** Profile with defaults; converts older formats (free-text goals and schedule, main/secondary goal lists). */
 export function normalizeProfile(raw = {}) {
   const p = { ...raw };
   if (typeof p.goals === 'string' || !p.goals) {
     const notes = typeof p.goals === 'string' ? p.goals : '';
-    p.goals = { main: '', secondary: [], phase: '', targets: p.raceGoal ? [{ text: p.raceGoal, date: '' }] : [], notes };
+    p.goals = { targets: p.raceGoal ? [{ text: p.raceGoal, date: '' }] : [], notes };
   }
-  p.goals = { main: '', secondary: [], phase: '', targets: [], notes: '', ...p.goals };
+  const g = { weights: {}, targets: [], notes: '', phase: '', ...p.goals };
+  if (!Object.keys(g.weights).length && (g.main || g.secondary?.length)) {
+    for (const k of g.secondary || []) for (const a of LEGACY_FOCUS[k] || []) g.weights[a] = Math.max(g.weights[a] || 0, 2);
+    for (const a of LEGACY_FOCUS[g.main] || []) g.weights[a] = 4;
+  }
+  delete g.main;
+  delete g.secondary;
+  p.goals = g;
   p.nutrition = { enabled: false, diet: 'Alles', intolerances: '', ...(p.nutrition || {}) };
+  p.modules = { football: false, ...(p.modules || {}) };
+  if (typeof p.schedule === 'string') {
+    if (p.schedule.trim()) p.scheduleNote = p.schedule;
+    p.schedule = undefined;
+  }
+  p.schedule = { recurring: [], once: [], ...(p.schedule || {}) };
   p.customExercises ??= [];
+  p.records ??= [];
   return p;
+}
+
+export const uid = (prefix) => `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+/** Fixed appointments on one day: the weekly ones for that weekday plus one-off entries, sorted by time. */
+export function fixedOn(profile, iso) {
+  const weekday = ((new Date(`${iso}T00:00:00`).getDay() + 6) % 7) + 1; // 1 = Monday
+  const weekly = profile.schedule.recurring.filter((r) => Number(r.weekday) === weekday).map((r) => ({ ...r, date: iso, repeat: true }));
+  const once = profile.schedule.once.filter((o) => o.date === iso);
+  return [...weekly, ...once].sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+}
+
+// ── personal records (rep maxes) ──
+/** Records grouped by exercise → reps → entries, newest first. */
+export function recordsByExercise(records) {
+  const out = new Map();
+  for (const r of [...records].sort((a, b) => b.date.localeCompare(a.date))) {
+    if (!out.has(r.exId)) out.set(r.exId, { exId: r.exId, name: r.name, byReps: new Map() });
+    const ex = out.get(r.exId);
+    if (!ex.byReps.has(r.reps)) ex.byReps.set(r.reps, []);
+    ex.byReps.get(r.reps).push(r);
+  }
+  for (const ex of out.values()) ex.byReps = new Map([...ex.byReps].sort((a, b) => a[0] - b[0]));
+  return out;
+}
+/** Heaviest entry for an exercise at exactly this rep count. */
+export function bestRecord(records, exId, reps) {
+  return records.filter((r) => r.exId === exId && r.reps === reps).reduce((best, r) => (!best || r.kg > best.kg ? r : best), null);
+}
+/** 1RM: the logged single, otherwise estimated from the best multi-rep max (Epley, up to 10 reps). */
+export function oneRepMax(records, exId) {
+  const single = bestRecord(records, exId, 1);
+  if (single) return { kg: single.kg, estimated: false };
+  const est = records.filter((r) => r.exId === exId && r.reps <= 10).map((r) => r.kg * (1 + r.reps / 30));
+  return est.length ? { kg: Math.max(...est), estimated: true } : null;
+}
+/** Logged sets that beat a tracked rep max (1RM, 3RM and every rep count already recorded for the exercise). */
+export function recordSuggestions(activities, records, limit = 5) {
+  const out = [];
+  for (const a of activities) {
+    for (const e of a.exercises || []) {
+      if (e.unit === 's') continue;
+      const tracked = new Set([1, 3, ...records.filter((r) => r.exId === e.id).map((r) => r.reps)]);
+      for (const st of e.sets || []) {
+        if (!st.kg || !tracked.has(st.reps)) continue;
+        const best = bestRecord(records, e.id, st.reps);
+        if (best && st.kg <= best.kg) continue;
+        const known = out.find((o) => o.exId === e.id && o.reps === st.reps);
+        if (known && known.kg >= st.kg) continue;
+        if (known) Object.assign(known, { kg: st.kg, date: a.date });
+        else out.push({ exId: e.id, name: e.name, reps: st.reps, kg: st.kg, date: a.date, previous: best?.kg });
+      }
+    }
+  }
+  return out.sort((x, y) => y.date.localeCompare(x.date)).slice(0, limit);
 }
 
 export const catalog = (profile) => [...EXERCISES, ...(profile.customExercises || [])];

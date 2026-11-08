@@ -1,6 +1,6 @@
-# Healthy Football einrichten – Schritt für Schritt (mit Claude)
+# Pulse Coach einrichten – Schritt für Schritt (mit Claude)
 
-Mit dieser Anleitung richtest du deine eigene Kopie von **Healthy Football** ein: Trainings-Dashboard für Laufen und Fussball, Garmin-Sync und KI-Coach. Am Ende hast du:
+Mit dieser Anleitung richtest du deine eigene Kopie von **Pulse Coach** ein: persönlicher Trainings-Coach mit Garmin-Sync, Wochenplan, Bestwerten und KI-Analyse. Am Ende hast du:
 
 - eine App unter `https://<dein-github-name>.github.io/Healthy_Football/`, im Browser und auf dem Handy,
 - ein **privates** Repo mit deinen Daten,
@@ -9,7 +9,7 @@ Mit dieser Anleitung richtest du deine eigene Kopie von **Healthy Football** ein
 Dauer: ca. 30 Minuten. Kosten: GitHub gratis, Claude API ca. 0.10–0.20 USD pro Analyse (Prepaid-Guthaben).
 
 > **So startest du:** Öffne Claude Code im Ordner deines Klons (oder in einem leeren Ordner) und sag:
-> **«Lies SETUP.md und richte mir Healthy Football ein.»**
+> **«Lies SETUP.md und richte mir Pulse Coach ein.»**
 
 Jeder GitHub-Schritt hat **zwei Wege**, die zum selben Ergebnis führen:
 
@@ -133,7 +133,7 @@ gh workflow run pages.yml -R <USER>/Healthy_Football
 4. Oben im Repo den Tab **Actions** öffnen → links **Deploy Web App** → rechts **Run workflow → Run workflow**.
 
 **Prüfen** (nach ca. 1 Minute): `https://<USER>.github.io/Healthy_Football/` öffnen. Du solltest die App im Demo-Modus sehen. Siehst du nur das README, steht Pages noch auf «Deploy from a branch», oder der Browser zeigt die alte Version: `Ctrl+F5`.
-Terminal: `curl -sL https://<USER>.github.io/Healthy_Football/ | grep -o "<title>.*</title>"` → `<title>Healthy Football</title>`
+Terminal: `curl -sL https://<USER>.github.io/Healthy_Football/ | grep -o "<title>.*</title>"` → `<title>Pulse Coach</title>`
 
 ---
 
@@ -299,7 +299,7 @@ Dieser Schritt läuft nur im Browser.
 
 Mit **Speichern & testen** prüfst du die Verbindung. Erwartet: «Verbunden mit <USER>/healthy_football_data (privat) · Workflows erreichbar». Danach siehst du deine echten Daten statt der Demo-Daten.
 
-👤 Danach in der App unter **Einstellungen → Profil für den Coach** Position, Ziele, Verletzungen und feste Trainingstermine ausfüllen. Damit werden die Tipps viel besser.
+👤 Danach in der App das **Profil** (Einstellungen), deinen **Auftrag** (Coach → Anpassen), deine **Fixtermine** (Plan) und allenfalls **Bestwerte** (Verlauf → Bestwerte) ausfüllen. Damit werden die Tipps viel besser.
 
 👤 **Handy:** Gleichen Ablauf mit eigenem Token (`healthy-football-handy`), danach im Browser «Zum Home-Bildschirm hinzufügen». Den «Setup-Link» aus den Einstellungen nur nutzen, wenn nötig. Er enthält den Token, also danach die Nachricht löschen.
 
@@ -348,7 +348,7 @@ Mit **Speichern & testen** prüfst du die Verbindung. Erwartet: «Verbunden mit 
 | Warnung «GH_PAT fehlt – Secret GARMIN_TOKENS kann nicht aktualisiert werden» | `GH_PAT` braucht **Secrets: Read and write** auf `Healthy_Football`. |
 | App: «Workflow nicht erreichbar» / «Not Found» | Im App-Token fehlt `Healthy_Football` oder **Actions: Read and write**. Oder in den Einstellungen steht ein falsches App-Repo. |
 | App: «keine Schreibrechte auf das Daten-Repo» | App-Token braucht **Contents: Read and write** auf `healthy_football_data`. |
-| Fussball als «Cardio»/«Andere» erkannt | In der App die Aktivität öffnen → **Ergänzen** → Sportart Fussball. |
+| Fussball als «Cardio»/«Andere» erkannt | Fussball-Modul einschalten (Einstellungen → Module), dann die Aktivität öffnen → **Ergänzen** → Sportart Fussball. |
 | Geplanter Sync läuft plötzlich nicht mehr | GitHub deaktiviert Zeitpläne nach 60 Tagen ohne Commit im App-Repo. Im Tab Actions wieder aktivieren. |
 
 ---
