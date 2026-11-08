@@ -6,10 +6,11 @@ import {
 import * as store from './store.js';
 import { bars, line, sparkline, ring, hbars, legend } from './charts.js';
 import {
-  MUSCLE_GROUPS, FOCUS, PHASES, DIETS, catalog, normalizeProfile, bestE1rm, volume, fmtSets,
-  lastSession, setRow, exerciseBlock, readExercises, slug,
+  MUSCLE_GROUPS, AREAS, FOOTBALL_AREAS, WEIGHT_LABELS, PHASES, DIETS, WEEKDAYS, catalog, normalizeProfile, bestE1rm, volume, fmtSets,
+  lastSession, setRow, exerciseBlock, readExercises, slug, uid, fixedOn, recordsByExercise, bestRecord, oneRepMax, recordSuggestions,
 } from './training.js';
 
+const APP_NAME = 'Pulse Coach';
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $('#view');
 const sheet = $('#sheet');
@@ -18,6 +19,7 @@ const state = {
   data: null,
   error: null,
   route: 'heute',
+  sub: '', // second hash segment, e.g. #/verlauf/trends
   actFilter: 'all',
   actQuery: '',
   trendWeeks: 12,
@@ -28,11 +30,14 @@ const state = {
 
 const ROUTES = {
   heute: { title: 'Heute', icon: 'home', render: renderToday },
-  aktivitaeten: { title: 'Aktivitäten', icon: 'list', render: renderActivities },
+  plan: { title: 'Plan', icon: 'calendar', render: renderPlan },
   coach: { title: 'Coach', icon: 'sparkles', render: renderCoach },
-  trends: { title: 'Trends', icon: 'chart', render: renderTrends },
-  einstellungen: { title: 'Einstellungen', icon: 'settings', render: renderSettings },
+  verlauf: { title: 'Verlauf', icon: 'history', render: renderHistory },
+  einstellungen: { title: 'Einstellungen', icon: 'gear', render: renderSettings },
 };
+const HISTORY_TABS = { '': 'Aktivitäten', trends: 'Trends', bestwerte: 'Bestwerte' };
+// old bookmarks and the manifest shortcuts
+const ROUTE_ALIASES = { aktivitaeten: 'verlauf', trends: 'verlauf/trends' };
 const SPORT_LABELS = Object.fromEntries(Object.entries(SPORTS).map(([k, v]) => [k, v.label]));
 const ZONE_COLORS = ['#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281'];
 const STATUS_TEXT = { hoch: 'Hoch', mittel: 'Mittel', niedrig: 'Niedrig' };
@@ -56,6 +61,30 @@ const daily = () => [...(state.data.garmin?.daily || [])].sort((a, b) => a.date.
 const analysis = () => state.data.insights?.analysis;
 const profile = () => normalizeProfile(state.data?.profile || {});
 const snapshot = () => state.data.garmin?.snapshot || {};
+const footballOn = () => profile().modules.football;
+/** 105 kg, 82.5 kg – decimals only when needed. */
+const fmtKg = (v, unit = true) => `${fmtNum(v, Math.round(v * 10) % 10 ? 1 : 0)}${unit ? ' kg' : ''}`;
+/** Sports offered in pickers: the profile's sports, football only with its module, plus whatever is already selected. */
+function pickableSports(current) {
+  const p = profile();
+  const active = p.sports?.length ? p.sports : Object.keys(SPORTS);
+  return Object.keys(SPORTS).filter((k) => k === current || k === 'other' || (active.includes(k) && (k !== 'football' || p.modules.football)));
+}
+
+/** Everything on one day: fixed appointments (with the coach's notes attached) and the coach's other sessions. */
+function dayItems(iso) {
+  const p = profile();
+  const planned = (analysis()?.plan || []).filter((x) => x.date === iso);
+  const fixed = fixedOn(p, iso).map((f) => ({ ...f, fixed: true }));
+  const coachFixed = planned.filter((x) => x.fixed);
+  fixed.forEach((f, i) => {
+    const match = coachFixed.find((x) => x.type === f.type) || coachFixed[i];
+    if (match) f.coach = match;
+  });
+  // a coach entry marked fixed without a matching appointment (e.g. appointment deleted since) still shows
+  const orphans = coachFixed.filter((x) => !fixed.some((f) => f.coach === x));
+  return { fixed, sessions: [...planned.filter((x) => !x.fixed), ...orphans], blocked: fixed.some((f) => f.kind === 'blocked') };
+}
 
 function actTitle(a) {
   if (a.title) return a.title;
@@ -83,6 +112,21 @@ function pageHead(title, sub, actions = '') {
     <div><p class="eyebrow">${sub}</p><h1>${title}</h1></div>
     ${actions ? `<div class="head-actions">${actions}</div>` : ''}
   </header>`;
+}
+
+/** iOS-style sheet header: Cancel leading, title, primary action trailing (sheets.md › Mobile). */
+function sheetBar(title, { submit = 'Sichern', cancel = 'Abbrechen', sub = '' } = {}) {
+  return `<header class="sheet-bar">
+    <button type="button" class="bar-btn" data-action="close-sheet">${cancel}</button>
+    <div class="sheet-title"><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ''}</div>
+    ${submit ? `<button type="submit" class="bar-btn strong">${submit}</button>` : '<span class="bar-btn" aria-hidden="true"></span>'}
+  </header>`;
+}
+
+/** Plain-language summary of the goal sliders, e.g. "Kraft (Top-Priorität) · Ausdauer (Wichtig)". */
+function goalsSummary(p) {
+  const areas = { ...AREAS, ...(p.modules.football ? FOOTBALL_AREAS : {}) };
+  return Object.entries(p.goals.weights).filter(([k, w]) => w > 0 && areas[k]).sort((a, b) => b[1] - a[1]);
 }
 
 function demoBanner() {
@@ -135,17 +179,39 @@ function tipList(tips = []) {
     </li>`).join('')}</ol>`;
 }
 
-function planCard(p) {
-  const s = p.type === 'rest' ? { label: 'Ruhetag', emoji: '😴' } : sport(p.type);
-  const isToday = p.date === todayISO();
-  return `<article class="plan-card${isToday ? ' is-today' : ''}" style="--c:${p.type === 'rest' ? 'var(--ink-3)' : sportColor(p.type)}">
-    <header><span class="plan-day">${esc(isToday ? 'Heute' : weekdayShort(p.date))}</span><span class="muted">${esc(fmtDate(p.date, { day: 'numeric', month: 'short' }))}</span></header>
-    <div class="plan-type">${s.emoji} ${esc(s.label)}</div>
-    <h3>${esc(p.title)}</h3>
-    <div class="plan-meta">${p.durationMin ? `<span>${icon('clock', 14)}${fmtDur(p.durationMin)}</span>` : ''}<span class="intensity i-${esc(p.intensity)}">${esc(p.intensity)}</span></div>
-    <p>${esc(p.details)}</p>
-    ${p.nutrition ? `<p class="plan-food">🍽️ ${esc(p.nutrition)}</p>` : ''}
+/** One entry of a plan day: a fixed appointment (optionally with the coach's notes) or a coach session. */
+function planEntry(x, { compact = false, editable = false } = {}) {
+  const blocked = x.kind === 'blocked';
+  const s = blocked ? { label: 'Keine Zeit', emoji: '⛔' } : x.type === 'rest' ? { label: 'Ruhetag', emoji: '😴' } : sport(x.type);
+  const coach = x.fixed ? x.coach : x;
+  const color = blocked || x.type === 'rest' ? 'var(--ink-3)' : sportColor(x.type);
+  const minutes = x.durationMin || coach?.durationMin;
+  const meta = [x.time, minutes && fmtDur(minutes), !x.fixed && compact ? null : s.label].filter(Boolean);
+  const intensity = !blocked && coach?.intensity && coach.intensity !== 'Ruhe' ? `<span class="intensity i-${esc(coach.intensity)}">${esc(coach.intensity)}</span>` : '';
+  return `<article class="plan-entry${x.fixed ? ' is-fixed' : ''}${blocked ? ' is-blocked' : ''}" style="--c:${color}">
+    <span class="act-icon">${s.emoji}</span>
+    <div class="plan-entry-main">
+      <div class="plan-entry-top">
+        <h3>${esc(x.title || coach?.title || s.label)}</h3>
+        ${x.fixed ? `<span class="chip fixed-chip">${icon('lock', 12)}Fix</span>` : ''}${intensity}
+      </div>
+      <p class="plan-entry-meta">${meta.map(esc).join(' · ')}</p>
+      ${coach?.details ? `<p class="plan-entry-details">${esc(coach.details)}</p>` : ''}
+      ${coach?.nutrition && !compact ? `<p class="plan-food">🍽️ ${esc(coach.nutrition)}</p>` : ''}
+    </div>
+    ${editable && x.fixed && x.id ? `<button class="icon-btn sm" data-action="edit-fixed" data-id="${esc(x.id)}" aria-label="${esc(x.title || 'Termin')} bearbeiten">${icon('edit', 16)}</button>` : ''}
   </article>`;
+}
+
+/** The next entries from today on, for the home screen. */
+function upcomingEntries(limit = 3) {
+  const out = [];
+  for (let i = 0; i < 7 && out.length < limit; i++) {
+    const date = addDays(todayISO(), i);
+    const { fixed, sessions } = dayItems(date);
+    for (const x of [...fixed, ...sessions]) out.push({ date, x });
+  }
+  return out.slice(0, limit);
 }
 
 function emptyState(title, text, action = '') {
@@ -223,7 +289,7 @@ function renderToday() {
   const greet = hour < 11 ? 'Guten Morgen' : hour < 18 ? 'Hallo' : 'Guten Abend';
   const name = profile().name;
   const score = an?.readiness?.score ?? snap.readiness?.score;
-  const upcoming = (an?.plan || []).filter((p) => p.date >= todayISO()).slice(0, 3);
+  const upcoming = upcomingEntries(3);
 
   const readiness = `<article class="card readiness">
     ${ring(score, { label: 'Bereitschaft' })}
@@ -252,15 +318,15 @@ function renderToday() {
 
   return `
     ${pageHead(`${greet}${name ? `, ${esc(name)}` : ''}`, esc(fmtDate(todayISO(), { weekday: 'long', day: 'numeric', month: 'long' })),
-      `<button class="btn" data-action="sync">${icon('refresh', 16)}<span>Sync</span></button><button class="btn btn-primary hide-mobile" data-action="add">${icon('plus', 16)}<span>Training</span></button>`)}
+      `<button class="btn hide-mobile" data-action="sync">${icon('refresh', 16)}<span>Sync</span></button><button class="btn btn-primary hide-mobile" data-action="add">${icon('plus', 16)}<span>Training</span></button>`)}
     ${demoBanner()}${pendingBanner()}
     <section class="grid hero">${readiness}${brief}</section>
     <section class="kpis">${KPIS.map((k) => kpiTile(k, days)).join('')}${vo2}</section>
     <section class="grid two">
       ${weekLoadCard(acts)}
       <article class="card">
-        <header class="card-head"><h2>Als Nächstes</h2><a class="link" href="#/coach">Wochenplan ${icon('chevron', 14)}</a></header>
-        ${upcoming.length ? `<div class="plan-list compact">${upcoming.map(planCard).join('')}</div>` : '<p class="muted">Der Coach erstellt dir nach der ersten Analyse einen Plan für die nächsten 7 Tage.</p>'}
+        <header class="card-head"><h2>Als Nächstes</h2><a class="link" href="#/plan">Wochenplan ${icon('chevron', 14)}</a></header>
+        ${upcoming.length ? `<div class="next-list">${upcoming.map(({ date, x }) => `<div class="next-item"><p class="next-day">${esc(relDay(date))}</p>${planEntry(x, { compact: true })}</div>`).join('')}</div>` : '<p class="muted">Der Coach erstellt dir nach der ersten Analyse einen Plan für die nächsten 7 Tage. Fixtermine trägst du im Plan ein.</p>'}
       </article>
     </section>
     <article class="card">
@@ -293,10 +359,11 @@ function renderActivities() {
     ${t === 'all' ? 'Alle' : `${sport(t).emoji} ${esc(sport(t).label)}`}</button>`).join('');
 
   return `
-    ${pageHead('Aktivitäten', `${all.length} Einträge · Garmin & manuell`, `<button class="btn btn-primary" data-action="add">${icon('plus', 16)}<span>Training erfassen</span></button>`)}
+    ${pageHead('Verlauf', `${all.length} Einträge · Garmin & manuell`, `<button class="btn btn-primary hide-mobile" data-action="add">${icon('plus', 16)}<span>Training erfassen</span></button>`)}
+    ${historyTabs()}
     ${demoBanner()}
     <div class="toolbar">
-      <label class="search">${icon('search', 16)}<input type="search" id="act-search" placeholder="Suchen (Titel, Gegner, Notizen)" value="${esc(state.actQuery)}"></label>
+      <label class="search">${icon('search', 16)}<input type="search" id="act-search" placeholder="${footballOn() ? 'Suchen (Titel, Gegner, Notizen)' : 'Suchen (Titel, Notizen)'}" value="${esc(state.actQuery)}" aria-label="Aktivitäten durchsuchen"></label>
       <div class="chips" role="group" aria-label="Sportart filtern">${chips}</div>
     </div>
     ${[...groups].map(([wk, items]) => {
@@ -312,7 +379,19 @@ function renderActivities() {
 // ───────────────────────── activity detail & form (dialog) ─────────────────────────
 function openSheet(html) {
   sheet.innerHTML = html;
+  sheet.scrollTop = 0;
+  paintRanges(sheet);
   if (!sheet.open) sheet.showModal();
+  // focus the sheet itself (not "Abbrechen"), so VoiceOver starts at the top and no focus ring flashes
+  sheet.focus({ preventScroll: true });
+}
+
+/** Filled part of iOS-style sliders (WebKit has no ::range-progress). */
+function paintRanges(root = document) {
+  root.querySelectorAll('input[type=range]').forEach((el) => {
+    const pct = ((el.value - el.min) / ((el.max - el.min) || 1)) * 100;
+    el.style.setProperty('--fillp', pct);
+  });
 }
 
 function openActivity(id) {
@@ -377,28 +456,25 @@ function openActivity(id) {
 
 function openForm(existing) {
   const mode = !existing ? 'new' : existing.source === 'garmin' ? 'garmin' : 'edit';
-  const a = existing || { type: 'football', date: todayISO(), football: { kind: 'training' } };
+  const p = profile();
+  const types = pickableSports(existing?.type);
+  const a = existing || { type: types.find((k) => k !== 'other') || 'other', date: todayISO() };
   const f = a.football || { kind: 'training' };
+  const showFootball = p.modules.football || a.type === 'football';
   const now = new Date();
   const time = a.start?.slice(11, 16) || `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const heading = { new: 'Training erfassen', edit: 'Training bearbeiten', garmin: 'Garmin-Aktivität ergänzen' }[mode];
-  const p = profile();
-  const active = p.sports?.length ? p.sports : Object.keys(SPORTS);
-  const types = Object.keys(SPORTS).filter((k) => active.includes(k) || k === 'other' || k === a.type);
   const all = activities();
 
   openSheet(`<form id="act-form" class="sheet-body form" data-mode="${mode}" data-id="${esc(a.id || '')}" novalidate>
-    <header class="sheet-head">
-      <div><h2>${heading}</h2>${mode === 'garmin' ? '<p class="muted">Messwerte kommen von der Uhr – ergänze, wie es sich angefühlt hat.</p>' : ''}</div>
-      <button type="button" class="icon-btn" data-action="close-sheet" aria-label="Schliessen">${icon('close')}</button>
-    </header>
+    ${sheetBar(heading, { sub: mode === 'garmin' ? 'Messwerte kommen von der Uhr' : '' })}
 
     <fieldset class="type-picker">
       <legend>Sportart</legend>
       ${types.map((k) => `<label style="--c:${sportColor(k)}"><input type="radio" name="type" value="${k}" ${a.type === k ? 'checked' : ''}><span>${SPORTS[k].emoji}</span>${esc(SPORTS[k].label)}</label>`).join('')}
     </fieldset>
 
-    <label class="field"><span>Titel <em>optional</em></span><input name="title" value="${esc(a.title || '')}" placeholder="z.B. Abschlusstraining, Intervalle 6×800 m" maxlength="80"></label>
+    <label class="field"><span>Titel <em>optional</em></span><input name="title" value="${esc(a.title || '')}" placeholder="z.B. Intervalle 6×800 m, Oberkörper" maxlength="80"></label>
 
     <div class="row no-garmin">
       <label class="field"><span>Datum</span><input type="date" name="date" value="${esc(a.date)}" max="${addDays(todayISO(), 30)}" required></label>
@@ -410,7 +486,7 @@ function openForm(existing) {
       <label class="field"><span>Ø Puls</span><input type="number" name="avgHr" inputmode="numeric" min="40" max="230" value="${esc(a.avgHr ?? '')}" placeholder="optional"></label>
     </div>
 
-    <fieldset class="football-fields">
+    ${showFootball ? `<fieldset class="football-fields">
       <legend>Fussball</legend>
       <div class="segmented">
         <label><input type="radio" name="fkind" value="training" ${f.kind !== 'match' ? 'checked' : ''}>Training</label>
@@ -425,7 +501,7 @@ function openForm(existing) {
         <label class="field"><span>Tore</span><input type="number" name="goals" inputmode="numeric" min="0" max="20" value="${esc(f.goals ?? '')}"></label>
         <label class="field"><span>Assists</span><input type="number" name="assists" inputmode="numeric" min="0" max="20" value="${esc(f.assists ?? '')}"></label>
       </div>
-    </fieldset>
+    </fieldset>` : ''}
 
     <fieldset class="strength-fields">
       <legend>Übungen</legend>
@@ -449,11 +525,7 @@ function openForm(existing) {
     </fieldset>
 
     <label class="field"><span>Notizen</span><textarea name="notes" rows="2" placeholder="Wie lief es? Schmerzen, Besonderheiten, Wetter …">${esc(a.notes || '')}</textarea></label>
-
-    <footer class="sheet-actions">
-      <button type="button" class="btn" data-action="close-sheet">Abbrechen</button>
-      <button type="submit" class="btn btn-primary">${icon('check', 16)}Speichern</button>
-    </footer>
+    <div class="sheet-spacer"></div>
   </form>`);
 }
 
@@ -532,10 +604,23 @@ function renderCoach() {
   const an = ins.analysis;
   const head = pageHead('Coach', an ? `Analyse ${esc(relTime(ins.generatedAt))} · ${esc(ins.model || 'Claude')}` : 'KI-Analyse mit Claude',
     `<button class="btn btn-primary" data-action="analyze" ${state.pending ? 'disabled' : ''}>${icon('sparkles', 16)}<span>Neu analysieren</span></button>`);
+  const p = profile();
+  const weights = goalsSummary(p);
+  const areas = { ...AREAS, ...FOOTBALL_AREAS };
+  const mission = `<article class="card mission">
+    <header class="card-head"><h2>${icon('target', 18)} Dein Auftrag an den Coach</h2><button class="btn btn-sm" data-action="edit-goals">${icon('edit', 14)}Anpassen</button></header>
+    ${p.goals.notes ? `<p class="lead">«${esc(p.goals.notes)}»</p>` : '<p class="muted">Sag dem Coach, was du willst: mehr Ausdauer, mehr Kraft, ein Ziel mit Datum. Je genauer, desto besser passt der Plan.</p>'}
+    ${weights.length ? `<div class="focus-meter">${weights.map(([k, w]) => `<div class="focus-row">
+      <span>${areas[k].emoji} ${esc(areas[k].label)}</span>
+      <span class="meter" role="img" aria-label="${esc(WEIGHT_LABELS[w])}">${[1, 2, 3, 4].map((n) => `<i class="${n <= w ? 'on' : ''}"></i>`).join('')}</span>
+      <span class="muted small">${esc(WEIGHT_LABELS[w])}</span></div>`).join('')}</div>` : ''}
+    ${p.goals.targets.length ? `<ul class="target-list">${p.goals.targets.map((t) => `<li>${icon('flame', 14)}<span>${esc(t.text)}</span>${t.date ? `<span class="muted small">bis ${esc(fmtDate(t.date, { day: 'numeric', month: 'short', year: 'numeric' }))}</span>` : ''}</li>`).join('')}</ul>` : ''}
+    ${!p.goals.notes && !weights.length ? '<button class="btn btn-primary" data-action="edit-goals">Ziele festlegen</button>' : ''}
+  </article>`;
   const ask = `<article class="card ask">
     <header class="card-head"><h2>Frag deinen Coach</h2></header>
     <form id="ask-form" class="ask-form">
-      <textarea name="q" rows="2" maxlength="2000" placeholder="z.B. Wie bereite ich mich auf einen 10-km-Lauf in 6 Wochen vor, ohne dass das Fussball leidet?" required></textarea>
+      <textarea name="q" rows="2" maxlength="2000" placeholder="z.B. Wie werde ich in 6 Wochen fit für einen 10-km-Lauf, ohne an Kraft zu verlieren?" required aria-label="Frage an den Coach"></textarea>
       <button class="btn btn-primary" type="submit" ${state.pending ? 'disabled' : ''}>${icon('send', 16)}<span>Senden</span></button>
     </form>
     <div class="qa-list">${(ins.qa || []).map((x) => `<details class="qa" ${x === ins.qa[0] ? 'open' : ''}>
@@ -546,16 +631,18 @@ function renderCoach() {
 
   if (!an) {
     return `${head}${demoBanner()}${pendingBanner()}
+      ${mission}
       ${emptyState('Noch keine Analyse', 'Drück auf «Jetzt analysieren» – Claude wertet dann alle Trainings und Gesundheitsdaten aus. Analysen laufen nur auf Knopfdruck.', '<button class="btn btn-primary" data-action="analyze">Jetzt analysieren</button>')}
       ${ask}`;
   }
 
-  const areas = focusAreas(an);
-  const tab = Math.min(state.coachTab, Math.max(0, areas.length - 1));
+  const focus = focusAreas(an);
+  const tab = Math.min(state.coachTab, Math.max(0, focus.length - 1));
   const loadStatus = an.load?.status || '';
   const loadClass = { 'zu niedrig': 'warn', aufbauend: 'good', optimal: 'good', hoch: 'warn', 'zu hoch': 'bad' }[loadStatus] || '';
 
   return `${head}${demoBanner()}${pendingBanner()}
+    ${mission}
     <section class="grid hero">
       <article class="card readiness">
         ${ring(an.readiness?.score, { label: 'Bereitschaft' })}
@@ -572,19 +659,20 @@ function renderCoach() {
       ${(an.warnings || []).map((w) => `<p class="warn">${icon('alert', 16)}${esc(w)}</p>`).join('')}
     </article>
     <article class="card">
-      <div class="segmented tabs" role="tablist">${areas.map((f, i) => `<button role="tab" aria-selected="${tab === i}" data-action="coach-tab" data-tab="${i}">${esc(f.area)}</button>`).join('')}</div>
-      <div class="tab-panel" role="tabpanel">${tipList(areas[tab]?.tips)}</div>
+      <div class="segmented tabs" role="tablist">${focus.map((f, i) => `<button role="tab" aria-selected="${tab === i}" data-action="coach-tab" data-tab="${i}">${esc(f.area)}</button>`).join('')}</div>
+      <div class="tab-panel" role="tabpanel">${tipList(focus[tab]?.tips)}</div>
     </article>
     ${an.nutrition ? `<article class="card">
       <header class="card-head"><h2>🍽️ Ernährung</h2><span class="muted small">Faustregeln</span></header>
       ${an.nutrition.summary ? `<p class="lead">${esc(an.nutrition.summary)}</p>` : ''}
       <div style="margin-top:12px">${tipList(an.nutrition.tips)}</div>
-      <p class="muted small" style="margin-top:12px">Allgemeine Empfehlungen auf Basis von Sporternährungs-Leitlinien (ACSM, ISSN, UEFA) – keine medizinische oder ernährungstherapeutische Beratung.</p>
+      <p class="muted small" style="margin-top:12px">Allgemeine Empfehlungen auf Basis von Sporternährungs-Leitlinien (ACSM, ISSN${p.modules.football ? ', UEFA' : ''}) – keine medizinische oder ernährungstherapeutische Beratung.</p>
     </article>` : ''}
-    <section>
-      <header class="section-head"><h2>Deine nächsten 7 Tage</h2><span class="muted small">Vorschlag vom Coach</span></header>
-      <div class="plan-list">${(an.plan || []).map(planCard).join('')}</div>
-    </section>
+    <a class="card link-card" href="#/plan">
+      <span class="act-icon" style="--c:var(--accent)">${icon('calendar', 22)}</span>
+      <span><strong>Dein Wochenplan</strong><span class="muted small">${(an.plan || []).length} Einheiten, um deine Fixtermine herum geplant</span></span>
+      ${icon('chevron', 18)}
+    </a>
     ${ask}`;
 }
 
@@ -653,7 +741,8 @@ function renderTrends() {
   const types = sportsIn(acts);
 
   return `
-    ${pageHead('Trends', 'Entwicklung über die Zeit', `<div class="segmented" role="group" aria-label="Zeitraum">${[4, 12, 26, 52].map((w) => `<button data-action="trend-range" data-weeks="${w}" aria-pressed="${weeks === w}">${w === 52 ? '1 J' : `${w} W`}</button>`).join('')}</div>`)}
+    ${pageHead('Verlauf', 'Entwicklung über die Zeit', `<div class="segmented" role="group" aria-label="Zeitraum">${[4, 12, 26, 52].map((w) => `<button data-action="trend-range" data-weeks="${w}" aria-pressed="${weeks === w}">${w === 52 ? '1 J' : `${w} W`}</button>`).join('')}</div>`)}
+    ${historyTabs()}
     ${demoBanner()}
     <section class="grid two">
       <article class="card wide">
@@ -740,20 +829,18 @@ function renderSettings() {
   const prefs = store.getPrefs();
   const p = profile();
   const live = store.isLive();
-  return `
-    ${pageHead('Einstellungen', live ? `Verbunden mit ${esc(cfg.owner)}/${esc(cfg.dataRepo)}` : 'Demo-Modus')}
-    <section class="grid two settings">
-      <article class="card">
+  const fb = p.modules.football;
+  const connection = `<article class="card">
         <header class="card-head"><h2>${icon('link', 18)} GitHub-Verbindung</h2>${live ? '<span class="chip good">Verbunden</span>' : ''}</header>
         <p class="muted small">Deine Daten liegen als JSON-Dateien in einem (privaten) GitHub-Repository. Der Token bleibt nur auf diesem Gerät gespeichert. Anleitung im README.</p>
         <form id="cfg-form" class="form">
           <div class="row">
-            <label class="field"><span>GitHub-Benutzer</span><input name="owner" value="${esc(cfg.owner || store.detectedRepo().owner || '')}" placeholder="schnre" required autocomplete="username"></label>
-            <label class="field"><span>Branch</span><input name="branch" value="${esc(cfg.branch || 'main')}"></label>
+            <label class="field"><span>GitHub-Benutzer</span><input name="owner" value="${esc(cfg.owner || store.detectedRepo().owner || '')}" placeholder="schnre" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>
+            <label class="field"><span>Branch</span><input name="branch" value="${esc(cfg.branch || 'main')}" autocapitalize="off" spellcheck="false"></label>
           </div>
           <div class="row">
-            <label class="field"><span>Daten-Repo</span><input name="dataRepo" value="${esc(cfg.dataRepo || '')}" placeholder="healthy_football_data" required></label>
-            <label class="field"><span>App-Repo (Workflows)</span><input name="codeRepo" value="${esc(live ? store.appRepo() : (cfg.codeRepo || store.detectedRepo().codeRepo || ''))}" placeholder="Healthy_Football"></label>
+            <label class="field"><span>Daten-Repo</span><input name="dataRepo" value="${esc(cfg.dataRepo || '')}" placeholder="healthy_football_data" required autocapitalize="off" spellcheck="false"></label>
+            <label class="field"><span>App-Repo (Workflows)</span><input name="codeRepo" value="${esc(live ? store.appRepo() : (cfg.codeRepo || store.detectedRepo().codeRepo || ''))}" placeholder="Healthy_Football" autocapitalize="off" spellcheck="false"></label>
           </div>
           <label class="field"><span>Fine-grained Personal Access Token</span><input name="token" type="password" value="${esc(cfg.token || '')}" placeholder="github_pat_…" autocomplete="off"></label>
           <div class="form-actions">
@@ -761,40 +848,50 @@ function renderSettings() {
             <button type="submit" class="btn btn-primary">${icon('check', 16)}Speichern & testen</button>
           </div>
         </form>
-      </article>
-
+      </article>`;
+  return `
+    ${pageHead('Einstellungen', live ? `Verbunden mit ${esc(cfg.owner)}/${esc(cfg.dataRepo)}` : 'Demo-Modus')}
+    <section class="grid two settings">
+      ${live ? '' : connection}
       <article class="card">
         <header class="card-head"><h2>${icon('user', 18)} Profil für den Coach</h2></header>
         <form id="profile-form" class="form">
           <div class="row">
-            <label class="field grow"><span>Name</span><input name="name" value="${esc(p.name || '')}"></label>
-            <label class="field"><span>Alter</span><input name="age" type="number" inputmode="numeric" value="${esc(p.age ?? '')}"></label>
-            <label class="field"><span>Gewicht (kg)</span><input name="weightKg" type="number" inputmode="decimal" step="0.1" value="${esc(p.weightKg ?? '')}"></label>
-            <label class="field"><span>Max. Puls</span><input name="maxHr" type="number" inputmode="numeric" value="${esc(p.maxHr ?? '')}"></label>
+            <label class="field grow"><span>Name</span><input name="name" value="${esc(p.name || '')}" autocomplete="given-name"></label>
+            <label class="field"><span>Alter</span><input name="age" type="number" inputmode="numeric" min="10" max="99" value="${esc(p.age ?? '')}"></label>
           </div>
           <div class="row">
+            <label class="field"><span>Gewicht (kg)</span><input name="weightKg" type="number" inputmode="decimal" step="0.1" value="${esc(p.weightKg ?? '')}"></label>
+            <label class="field"><span>Max. Puls</span><input name="maxHr" type="number" inputmode="numeric" value="${esc(p.maxHr ?? '')}"></label>
+            <label class="field"><span>Tage/Woche</span><input name="trainingDays" type="number" inputmode="numeric" min="1" max="7" value="${esc(p.trainingDays ?? '')}"></label>
+          </div>
+          ${fb ? `<div class="row">
             <label class="field grow"><span>Position</span>
               <select name="position">${['', 'Sturm', 'Flügel', 'Offensives Mittelfeld', 'Zentrales Mittelfeld', 'Defensives Mittelfeld', 'Aussenverteidigung', 'Innenverteidigung', 'Torhüter'].map((o) => `<option ${p.position === o ? 'selected' : ''}>${o}</option>`).join('')}</select>
             </label>
             <label class="field grow"><span>Niveau / Liga</span><input name="level" value="${esc(p.level || '')}" placeholder="z.B. 4. Liga"></label>
-            <label class="field"><span>Tage/Woche</span><input name="trainingDays" type="number" min="1" max="7" value="${esc(p.trainingDays ?? '')}"></label>
-          </div>
+          </div>` : ''}
           <fieldset class="type-picker">
-            <legend>Deine Sportarten <em class="muted">(steuert Auswahl beim Erfassen und den Coach)</em></legend>
-            ${Object.keys(SPORTS).filter((k) => k !== 'other').map((k) => `<label style="--c:${sportColor(k)}"><input type="checkbox" name="sports" value="${k}" ${!p.sports?.length || p.sports.includes(k) ? 'checked' : ''}><span>${SPORTS[k].emoji}</span>${esc(SPORTS[k].label)}</label>`).join('')}
+            <legend>Deine Sportarten <em class="muted">(steuert die Auswahl beim Erfassen und den Coach)</em></legend>
+            ${Object.keys(SPORTS).filter((k) => k !== 'other' && (k !== 'football' || fb)).map((k) => `<label style="--c:${sportColor(k)}"><input type="checkbox" name="sports" value="${k}" ${!p.sports?.length || p.sports.includes(k) ? 'checked' : ''}><span>${SPORTS[k].emoji}</span>${esc(SPORTS[k].label)}</label>`).join('')}
           </fieldset>
           <label class="field"><span>Verletzungen / Einschränkungen</span><textarea name="injuries" rows="2">${esc(p.injuries || '')}</textarea></label>
-          <label class="field"><span>Feste Termine</span><input name="schedule" value="${esc(p.schedule || '')}" placeholder="z.B. Training Di + Do 19:30, Match Sa"></label>
+          <p class="muted small">Ziele legst du im <a class="link" href="#/coach">Coach</a> fest, Fixtermine im <a class="link" href="#/plan">Plan</a>.</p>
           <div class="form-actions"><button type="submit" class="btn btn-primary">${icon('check', 16)}Profil speichern</button></div>
         </form>
       </article>
 
-      ${goalsCard(p)}
+      <article class="card">
+        <header class="card-head"><h2>${icon('sparkles', 18)} Module</h2></header>
+        <label class="switch"><input type="checkbox" data-module="football" ${fb ? 'checked' : ''}><span></span>⚽ Fussball</label>
+        <p class="muted small">Blendet Match-Felder (Gegner, Resultat, Tore), Position, Liga, Saisonphase und das Ziel «Matchfitness» ein. Der Coach berücksichtigt dann zusätzlich Matchtage.</p>
+      </article>
+
       ${nutritionCard(p)}
       ${exercisesCard(p)}
 
       <article class="card">
-        <header class="card-head"><h2>${icon('sparkles', 18)} Automatisierung</h2></header>
+        <header class="card-head"><h2>${icon('refresh', 18)} Automatisierung</h2></header>
         <label class="switch"><input type="checkbox" data-pref="analyzeAfterEntry" ${prefs.analyzeAfterEntry ? 'checked' : ''}><span></span>Nach jedem erfassten Training automatisch analysieren (kostet API-Guthaben)</label>
         <p class="muted small">Garmin wird automatisch alle 3 Stunden synchronisiert – das ist gratis. Claude analysiert nur, wenn du «Neu analysieren» drückst oder eine Frage stellst (ca. 0.10–0.20 USD pro Analyse).</p>
         <p class="muted small">Letzter Garmin-Sync: <strong>${esc(relTime(state.data?.garmin?.updatedAt))}</strong> · Letzte Analyse: <strong>${esc(relTime(state.data?.insights?.generatedAt))}</strong></p>
@@ -815,39 +912,47 @@ function renderSettings() {
           ${live ? '' : `<button class="btn" data-action="reset-demo">Demo zurücksetzen</button>`}
         </div>
       </article>
+      ${live ? connection : ''}
     </section>`;
 }
 
 function targetRow(t = {}) {
   return `<div class="row target-row">
-    <label class="field grow"><span>Ziel</span><input name="targetText" value="${esc(t.text || '')}" placeholder="z.B. 10 km unter 42:00 · Kniebeuge 100 kg"></label>
+    <label class="field grow"><span>Messbares Ziel</span><input name="targetText" value="${esc(t.text || '')}" placeholder="z.B. 10 km unter 45:00 · Back Squat 100 kg"></label>
     <label class="field"><span>Bis</span><input name="targetDate" type="date" value="${esc(t.date || '')}"></label>
     <button type="button" class="icon-btn" data-action="remove-target" aria-label="Ziel entfernen">${icon('trash', 16)}</button>
   </div>`;
 }
 
-function goalsCard(p) {
+/** Goals sheet: free text first (what the user wants), then focus sliders, measurable targets. */
+function openGoalsForm() {
+  const p = profile();
   const g = p.goals;
-  return `<article class="card">
-    <header class="card-head"><h2>${icon('target', 18)} Ziele & Schwerpunkt</h2></header>
-    <form id="goals-form" class="form">
-      <label class="field"><span>Hauptziel</span>
-        <select name="main"><option value="">– wählen –</option>${Object.entries(FOCUS).map(([k, l]) => `<option value="${k}" ${g.main === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-      </label>
-      <fieldset class="chip-checks">
-        <legend>Weitere Ziele</legend>
-        ${Object.entries(FOCUS).map(([k, l]) => `<label><input type="checkbox" name="secondary" value="${k}" ${g.secondary.includes(k) ? 'checked' : ''}>${esc(l)}</label>`).join('')}
-      </fieldset>
-      <fieldset>
-        <legend>Saisonphase</legend>
-        <div class="segmented">${Object.entries(PHASES).map(([k, l]) => `<label><input type="radio" name="phase" value="${k}" ${g.phase === k ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div>
-      </fieldset>
-      <div class="targets">${(g.targets.length ? g.targets : [{}]).map(targetRow).join('')}</div>
-      <button type="button" class="btn btn-sm add-target" data-action="add-target">${icon('plus', 14)}Messbares Ziel</button>
-      <label class="field"><span>Details & Wünsche</span><textarea name="notes" rows="2" placeholder="z.B. Ich mag keine Bahnintervalle, will bis Saisonstart fitter sein als letztes Jahr">${esc(g.notes)}</textarea></label>
-      <div class="form-actions"><button type="submit" class="btn btn-primary">${icon('check', 16)}Ziele speichern</button></div>
-    </form>
-  </article>`;
+  const areas = { ...AREAS, ...(p.modules.football ? FOOTBALL_AREAS : {}) };
+  openSheet(`<form id="goals-form" class="sheet-body form">
+    ${sheetBar('Dein Auftrag', { sub: 'Fliesst in die nächste Analyse ein' })}
+    <label class="field"><span>Was willst du erreichen?</span>
+      <textarea name="notes" rows="3" maxlength="1500" placeholder="z.B. Mehr Kraft im Oberkörper, 2× pro Woche laufen, im Frühling einen Halbmarathon. Ich mag keine Bahnintervalle.">${esc(g.notes)}</textarea>
+    </label>
+    <fieldset class="sliders">
+      <legend>Schwerpunkte</legend>
+      ${Object.entries(areas).map(([k, a]) => {
+        const w = g.weights[k] || 0;
+        return `<label class="slider-row">
+          <span class="slider-label">${a.emoji} ${esc(a.label)}</span>
+          <output data-for="w_${k}">${esc(WEIGHT_LABELS[w])}</output>
+          <input type="range" name="w_${k}" min="0" max="4" step="1" value="${w}" aria-label="${esc(a.label)}" aria-valuetext="${esc(WEIGHT_LABELS[w])}">
+        </label>`;
+      }).join('')}
+    </fieldset>
+    <div class="targets">${(g.targets.length ? g.targets : [{}]).map(targetRow).join('')}</div>
+    <button type="button" class="btn btn-sm add-target" data-action="add-target">${icon('plus', 14)}Weiteres Ziel</button>
+    ${p.modules.football ? `<fieldset>
+      <legend>Saisonphase</legend>
+      <div class="segmented">${Object.entries(PHASES).map(([k, l]) => `<label><input type="radio" name="phase" value="${k}" ${g.phase === k ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div>
+    </fieldset>` : ''}
+    <div class="sheet-spacer"></div>
+  </form>`);
 }
 
 function nutritionCard(p) {
@@ -855,12 +960,12 @@ function nutritionCard(p) {
   return `<article class="card">
     <header class="card-head"><h2>🍽️ Ernährung</h2>${n.enabled ? '<span class="chip good">Aktiv</span>' : ''}</header>
     <form id="nutrition-form" class="form">
-      <label class="switch"><input type="checkbox" name="enabled" ${n.enabled ? 'checked' : ''}><span></span>Ernährungstipps vom Coach (Faustregeln vor/nach Training und Match)</label>
+      <label class="switch"><input type="checkbox" name="enabled" ${n.enabled ? 'checked' : ''}><span></span>Ernährungstipps vom Coach (Faustregeln vor und nach dem Training)</label>
       <div class="row">
         <label class="field"><span>Ernährungsform</span><select name="diet">${DIETS.map((d) => `<option ${n.diet === d ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
         <label class="field grow"><span>Unverträglichkeiten / Allergien</span><input name="intolerances" value="${esc(n.intolerances)}" placeholder="z.B. Laktose, Nüsse"></label>
       </div>
-      <p class="muted small">Grundlage: Leitlinien von ACSM, ISSN und UEFA zur Sporternährung. Keine medizinische Beratung – bei Allergien oder Erkrankungen Fachperson fragen.</p>
+      <p class="muted small">Grundlage: Leitlinien von ACSM und ISSN${p.modules.football ? ' sowie UEFA' : ''} zur Sporternährung. Keine medizinische Beratung – bei Allergien oder Erkrankungen Fachperson fragen.</p>
       <div class="form-actions"><button type="submit" class="btn btn-primary">${icon('check', 16)}Speichern</button></div>
     </form>
   </article>`;
@@ -901,14 +1006,19 @@ function submitGoals(form) {
   const fd = new FormData(form);
   const texts = fd.getAll('targetText');
   const dates = fd.getAll('targetDate');
-  const goals = {
-    main: fd.get('main') || '',
-    secondary: fd.getAll('secondary').filter((k) => k !== fd.get('main')),
-    phase: fd.get('phase') || '',
-    targets: texts.map((text, i) => ({ text: text.trim(), date: dates[i] || '' })).filter((t) => t.text),
-    notes: fd.get('notes').trim(),
-  };
-  return saveProfile((p) => ({ ...p, goals }), 'Ziele gespeichert – sie fliessen in die nächste Analyse ein');
+  const weights = {};
+  for (const [k, v] of fd) if (k.startsWith('w_') && Number(v) > 0) weights[k.slice(2)] = Number(v);
+  sheet.close();
+  return saveProfile((p) => ({
+    ...p,
+    goals: {
+      ...p.goals,
+      weights: { ...(p.modules.football ? {} : { match_fitness: p.goals.weights.match_fitness }), ...weights },
+      ...(fd.has('phase') ? { phase: fd.get('phase') || '' } : {}),
+      targets: texts.map((text, i) => ({ text: text.trim(), date: dates[i] || '' })).filter((t) => t.text),
+      notes: fd.get('notes').trim(),
+    },
+  }), 'Ziele gespeichert – tippe auf «Neu analysieren», damit der Coach sie umsetzt');
 }
 
 function submitNutrition(form) {
@@ -963,12 +1073,267 @@ async function submitConfig(form) {
 function submitProfile(form) {
   const fd = new FormData(form);
   const basics = { sports: fd.getAll('sports') };
-  for (const k of ['name', 'position', 'level', 'injuries', 'schedule']) basics[k] = (fd.get(k) || '').trim() || undefined;
+  // position/level only exist with the football module – keep the stored values when the fields are hidden
+  for (const k of ['name', 'position', 'level', 'injuries']) if (fd.has(k)) basics[k] = (fd.get(k) || '').trim() || undefined;
   for (const k of ['age', 'weightKg', 'maxHr', 'trainingDays']) basics[k] = fd.get(k) ? Number(fd.get(k)) : undefined;
   return saveProfile((p) => {
     const { raceGoal, ...rest } = p; // folded into goals.targets by normalizeProfile
-    return { ...rest, ...basics };
+    const keepFootball = p.sports?.includes('football') && !p.modules.football;
+    return { ...rest, ...basics, sports: keepFootball ? [...basics.sports, 'football'] : basics.sports };
   }, 'Profil gespeichert');
+}
+
+// ───────────────────────── page: plan ─────────────────────────
+function renderPlan() {
+  const ins = state.data.insights || {};
+  const an = analysis();
+  const p = profile();
+  const today = todayISO();
+  const days = Array.from({ length: 7 }, (_, i) => addDays(today, i));
+  const stale = an && !(an.plan || []).some((x) => x.date >= addDays(today, 1));
+  const head = pageHead('Plan', an ? `Vom Coach erstellt ${esc(relTime(ins.generatedAt))}` : 'Deine nächsten 7 Tage',
+    `<button class="btn btn-primary" data-action="analyze" ${state.pending ? 'disabled' : ''}>${icon('sparkles', 16)}<span>Neu planen</span></button>`);
+
+  const week = days.map((d) => {
+    const { fixed, sessions, blocked } = dayItems(d);
+    const items = [...fixed, ...sessions];
+    return `<section class="plan-day${d === today ? ' is-today' : ''}${blocked ? ' is-blocked' : ''}" aria-label="${esc(fmtDate(d, { weekday: 'long', day: 'numeric', month: 'long' }))}">
+      <header><span class="plan-dow">${d === today ? 'Heute' : esc(fmtDate(d, { weekday: 'long' }))}</span><span class="plan-date">${esc(fmtDate(d, { day: 'numeric', month: 'short' }))}</span></header>
+      <div class="plan-items">${items.map((x) => planEntry(x, { editable: true })).join('') || `<p class="plan-empty">${an ? 'Nichts geplant' : '–'}</p>`}</div>
+    </section>`;
+  }).join('');
+
+  const weekly = [...p.schedule.recurring].sort((a, b) => a.weekday - b.weekday || (a.time || '').localeCompare(b.time || ''));
+  const once = p.schedule.once.filter((o) => o.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  const fixedRow = (f, when) => `<button class="list-row" data-action="edit-fixed" data-id="${esc(f.id)}">
+      <span class="act-icon sm" style="--c:${f.kind === 'blocked' ? 'var(--ink-3)' : sportColor(f.type)}">${f.kind === 'blocked' ? '⛔' : sport(f.type).emoji}</span>
+      <span class="list-row-main"><strong>${esc(f.title || (f.kind === 'blocked' ? 'Keine Zeit' : sport(f.type).label))}</strong><span class="muted small">${esc(when)}</span></span>
+      ${icon('chevron', 16)}
+    </button>`;
+
+  return `${head}${demoBanner()}${pendingBanner()}
+    ${!an ? `<div class="banner">${icon('sparkles', 18)}<p>Trag zuerst deine Fixtermine ein und starte dann die Analyse. Der Coach plant die Woche um deine Termine herum.</p></div>` : ''}
+    ${stale ? `<div class="banner">${icon('alert', 18)}<p>Dieser Plan ist älter als eine Woche. Tippe auf «Neu planen», dann erstellt der Coach die nächsten 7 Tage.</p></div>` : ''}
+    <div class="week">${week}</div>
+    <section class="grid two">
+      <article class="card">
+        <header class="card-head"><h2>${icon('lock', 18)} Wöchentliche Fixtermine</h2><button class="btn btn-sm" data-action="add-fixed" data-kind="recurring">${icon('plus', 14)}Termin</button></header>
+        ${weekly.length ? `<div class="list">${weekly.map((f) => fixedRow(f, `Jeden ${WEEKDAYS[f.weekday - 1]}${f.time ? ` · ${f.time}` : ''}${f.durationMin ? ` · ${fmtDur(f.durationMin)}` : ''}`)).join('')}</div>`
+          : '<p class="muted small">Zum Beispiel Teamtraining, Kurs oder Lauftreff. Der Coach plant diese Termine fest ein.</p>'}
+        ${p.scheduleNote ? `<p class="note">${icon('edit', 14)}<span>Deine frühere Notiz: «${esc(p.scheduleNote)}». Der Coach liest sie weiterhin. Trag die Termine oben ein und entferne sie danach. <button class="link" data-action="clear-schedule-note">Notiz entfernen</button></span></p>` : ''}
+      </article>
+      <article class="card">
+        <header class="card-head"><h2>${icon('calendar', 18)} Einmalige Termine</h2><button class="btn btn-sm" data-action="add-fixed" data-kind="once">${icon('plus', 14)}Termin</button></header>
+        ${once.length ? `<div class="list">${once.map((f) => fixedRow(f, `${fmtDate(f.date, { weekday: 'short', day: 'numeric', month: 'short' })}${f.time ? ` · ${f.time}` : ''}${f.kind === 'blocked' ? ' · keine Zeit' : f.durationMin ? ` · ${fmtDur(f.durationMin)}` : ''}`)).join('')}</div>`
+          : '<p class="muted small">Ein Wettkampf, ein Event oder ein Tag, an dem du keine Zeit hast (Ferien, Arbeit).</p>'}
+      </article>
+    </section>`;
+}
+
+function openFixedForm(existing, kind = 'recurring') {
+  const p = profile();
+  const isOnce = existing ? Boolean(existing.date) : kind === 'once';
+  const f = existing || { type: pickableSports().find((k) => k !== 'other') || 'other', time: '18:00', durationMin: 60, weekday: 1, date: todayISO(), kind: 'session' };
+  const types = pickableSports(f.type);
+  openSheet(`<form id="fixed-form" class="sheet-body form" data-id="${esc(f.id || '')}" data-list="${isOnce ? 'once' : 'recurring'}" novalidate>
+    ${sheetBar(existing ? 'Termin bearbeiten' : isOnce ? 'Einmaliger Termin' : 'Wöchentlicher Termin')}
+    ${isOnce ? `<div class="segmented full">
+        <label><input type="radio" name="kind" value="session" ${f.kind !== 'blocked' ? 'checked' : ''}>Training / Event</label>
+        <label><input type="radio" name="kind" value="blocked" ${f.kind === 'blocked' ? 'checked' : ''}>Keine Zeit</label>
+      </div>
+      <label class="field"><span>Datum</span><input type="date" name="date" value="${esc(f.date)}" min="${todayISO()}" required></label>`
+    : `<fieldset class="weekday-picker"><legend>Wochentag</legend>
+        ${WEEKDAYS.map((w, i) => `<label><input type="radio" name="weekday" value="${i + 1}" ${Number(f.weekday) === i + 1 ? 'checked' : ''}><span aria-label="${w}">${w.slice(0, 2)}</span></label>`).join('')}
+      </fieldset>`}
+    <div class="row">
+      <label class="field"><span>Uhrzeit <em>optional</em></span><input type="time" name="time" value="${esc(f.time || '')}"></label>
+      <label class="field session-only"><span>Dauer (min)</span><input type="number" name="durationMin" inputmode="numeric" min="5" max="600" value="${esc(f.durationMin ?? '')}"></label>
+    </div>
+    <fieldset class="type-picker session-only">
+      <legend>Sportart</legend>
+      ${types.map((k) => `<label style="--c:${sportColor(k)}"><input type="radio" name="type" value="${k}" ${f.type === k ? 'checked' : ''}><span>${SPORTS[k].emoji}</span>${esc(SPORTS[k].label)}</label>`).join('')}
+    </fieldset>
+    <label class="field"><span>Titel</span><input name="title" value="${esc(f.title || '')}" maxlength="60" placeholder="${isOnce ? 'z.B. Stadtlauf 10 km, Ferien' : 'z.B. Teamtraining, Spinning-Kurs'}"></label>
+    ${p.modules.football && !isOnce ? '<p class="muted small">Tipp: Nenne Matches «Match», dann plant der Coach den Vortag locker.</p>' : ''}
+    ${existing ? `<button type="button" class="btn btn-danger btn-block" data-action="delete-fixed" data-id="${esc(f.id)}" data-list="${isOnce ? 'once' : 'recurring'}">${icon('trash', 16)}Termin löschen</button>` : ''}
+    <div class="sheet-spacer"></div>
+  </form>`);
+}
+
+function submitFixed(form) {
+  const fd = new FormData(form);
+  const list = form.dataset.list;
+  const blocked = fd.get('kind') === 'blocked';
+  if (list === 'once' && !fd.get('date')) { form.elements.date.setAttribute('aria-invalid', 'true'); toast('Bitte ein Datum wählen.', 'error'); return null; }
+  const entry = JSON.parse(JSON.stringify({
+    id: form.dataset.id || uid('f'),
+    ...(list === 'once' ? { date: fd.get('date'), kind: blocked ? 'blocked' : 'session' } : { weekday: Number(fd.get('weekday') || 1) }),
+    time: fd.get('time') || undefined,
+    durationMin: blocked ? undefined : Number(fd.get('durationMin')) || undefined,
+    type: blocked ? undefined : fd.get('type') || 'other',
+    title: fd.get('title').trim() || undefined,
+  }));
+  sheet.close();
+  return saveProfile((p) => {
+    const items = p.schedule[list].filter((x) => x.id !== entry.id);
+    return { ...p, schedule: { ...p.schedule, [list]: [...items, entry] } };
+  }, 'Termin gespeichert – mit «Neu planen» baut der Coach ihn ein');
+}
+
+function findFixed(id) {
+  const p = profile();
+  return p.schedule.recurring.find((x) => x.id === id) || p.schedule.once.find((x) => x.id === id);
+}
+
+// ───────────────────────── page: history (activities · trends · records) ─────────────────────────
+function historyTabs() {
+  return `<nav class="segmented full history-tabs" aria-label="Verlauf">${Object.entries(HISTORY_TABS).map(([k, l]) =>
+    `<a href="#/verlauf${k ? `/${k}` : ''}" ${state.sub === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
+}
+
+function renderHistory() {
+  if (state.sub === 'trends') return renderTrends();
+  if (state.sub === 'bestwerte') return renderRecords();
+  return renderActivities();
+}
+
+function renderRecords() {
+  const p = profile();
+  const grouped = [...recordsByExercise(p.records).values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  const suggestions = recordSuggestions(activities(), p.records);
+  const kg = (v) => fmtKg(v);
+
+  const suggestCard = suggestions.length ? `<article class="card">
+    <header class="card-head"><h2>${icon('sparkles', 18)} Neu aus deinen Trainings</h2></header>
+    <div class="list">${suggestions.map((s) => `<div class="list-row static">
+      <span class="act-icon sm" style="--c:var(--accent)">🏆</span>
+      <span class="list-row-main"><strong>${esc(s.name)} · ${s.reps}RM ${kg(s.kg)}</strong>
+        <span class="muted small">${esc(relDay(s.date))}${s.previous ? ` · bisher ${kg(s.previous)}` : ' · noch kein Eintrag'}</span></span>
+      <button class="btn btn-sm" data-action="accept-record" data-ex="${esc(s.exId)}" data-name="${esc(s.name)}" data-reps="${s.reps}" data-kg="${s.kg}" data-date="${esc(s.date)}">Übernehmen</button>
+    </div>`).join('')}</div>
+  </article>` : '';
+
+  const cards = grouped.map((ex) => {
+    const max = oneRepMax(p.records, ex.exId);
+    return `<button class="card record-card" data-action="open-record" data-ex="${esc(ex.exId)}">
+      <header><strong>${esc(ex.name)}</strong>${icon('chevron', 16)}</header>
+      <div class="record-values">${[...ex.byReps].map(([reps, list]) => {
+        const best = list.reduce((b, r) => (r.kg > b.kg ? r : b));
+        const prev = list.find((r) => r !== best && r.date < best.date);
+        return `<div class="record-value">
+          <span class="rm">${reps}RM</span>
+          <span class="num">${fmtNum(best.kg, best.kg % 1 ? 1 : 0)}<small>kg</small></span>
+          <span class="muted small">${esc(fmtDate(best.date, { day: 'numeric', month: 'short', year: '2-digit' }))}${prev ? ` · <span class="trend good">+${fmtKg(best.kg - prev.kg, false)}</span>` : ''}</span>
+        </div>`;
+      }).join('')}</div>
+      ${max?.estimated ? `<p class="muted small">≈ 1RM ${kg(Math.round(max.kg * 2) / 2)} (geschätzt)</p>` : ''}
+    </button>`;
+  }).join('');
+
+  return `${pageHead('Verlauf', `${grouped.length} ${grouped.length === 1 ? 'Übung' : 'Übungen'} mit Bestwerten`, `<button class="btn btn-primary" data-action="add-record">${icon('plus', 16)}<span>Bestwert</span></button>`)}
+    ${historyTabs()}
+    ${demoBanner()}
+    ${suggestCard}
+    ${grouped.length ? `<section class="records">${cards}</section>`
+      : emptyState('Noch keine Bestwerte', 'Trag dein 1RM, 3RM oder eine andere Wiederholungszahl ein, z.B. für Back Squat, Deadlift oder Snatch. Der Coach rechnet deine Trainingsgewichte dann in Prozent davon.', `<button class="btn btn-primary" data-action="add-record">${icon('plus', 16)}Bestwert eintragen</button>`)}`;
+}
+
+function openRecordDetail(exId) {
+  const p = profile();
+  const ex = recordsByExercise(p.records).get(exId);
+  if (!ex) return;
+  const max = oneRepMax(p.records, exId);
+  const ms = (iso) => parseDay(iso).getTime();
+  const reps = [...ex.byReps.keys()];
+  const chartReps = reps.reduce((best, r) => (ex.byReps.get(r).length > ex.byReps.get(best).length ? r : best), reps[0]);
+  const series = [...ex.byReps.get(chartReps)].reverse();
+  const chart = line(series.map((r) => ({ x: ms(r.date), y: r.kg, tip: `<b>${esc(fmtDate(r.date))}</b><br>${chartReps}RM ${fmtKg(r.kg)}` })), {
+    color: 'var(--accent)', yFormat: (v) => fmtNum(v),
+    xLabels: series.length > 1 ? [series[0], series.at(-1)].map((r) => ({ x: ms(r.date), label: fmtDate(r.date, { month: 'short', year: '2-digit' }) })) : [],
+  });
+  const pcts = [95, 90, 85, 80, 75, 70, 65, 60];
+  const round = (v) => Math.round(v / 2.5) * 2.5;
+
+  openSheet(`<div class="sheet-body">
+    <header class="sheet-bar">
+      <span class="bar-btn" aria-hidden="true"></span>
+      <div class="sheet-title"><h2>${esc(ex.name)}</h2><p>${max ? `1RM ${fmtKg(max.kg)}${max.estimated ? ' (geschätzt)' : ''}` : ''}</p></div>
+      <button type="button" class="bar-btn strong" data-action="close-sheet">Fertig</button>
+    </header>
+    <h3 class="sub">${chartReps}RM-Verlauf</h3>
+    ${chart}
+    ${max ? `<h3 class="sub">Prozenttabelle</h3>
+    <div class="pct-grid">${pcts.map((pc) => `<div><span class="muted small">${pc} %</span><strong>${fmtKg(round(max.kg * pc / 100), false)}</strong></div>`).join('')}</div>
+    <p class="muted small">Auf 2.5 kg gerundet, Basis: ${max.estimated ? 'aus deinem besten Mehrfach-Max geschätzt (Epley)' : 'dein eingetragenes 1RM'}.</p>` : ''}
+    <h3 class="sub">Alle Einträge</h3>
+    <div class="list">${p.records.filter((r) => r.exId === exId).sort((a, b) => b.date.localeCompare(a.date)).map((r) => `<div class="list-row static">
+      <span class="rm">${r.reps}RM</span>
+      <span class="list-row-main"><strong>${fmtKg(r.kg)}</strong><span class="muted small">${esc(fmtDate(r.date, { day: 'numeric', month: 'long', year: 'numeric' }))}${r.note ? ` · ${esc(r.note)}` : ''}</span></span>
+      <button class="icon-btn sm" data-action="delete-record" data-id="${esc(r.id)}" aria-label="Eintrag vom ${esc(fmtDate(r.date))} löschen">${icon('trash', 16)}</button>
+    </div>`).join('')}</div>
+    <footer class="sheet-actions">
+      <button class="btn btn-primary" data-action="add-record" data-ex="${esc(exId)}">${icon('plus', 16)}Neuer Eintrag</button>
+    </footer>
+  </div>`);
+}
+
+function openRecordForm(preset = {}) {
+  const p = profile();
+  const reps = preset.reps || 1;
+  const choice = reps === 1 || reps === 3 ? String(reps) : 'x';
+  const weighted = catalog(p).filter((e) => !e.bw && e.unit !== 's');
+  openSheet(`<form id="record-form" class="sheet-body form" novalidate>
+    ${sheetBar('Bestwert eintragen')}
+    <label class="field"><span>Übung</span>
+      <input name="exercise" list="record-ex-options" value="${esc(preset.name || '')}" placeholder="z.B. Back Squat, Deadlift, Snatch" required autocomplete="off">
+      <datalist id="record-ex-options">${weighted.map((e) => `<option value="${esc(e.name)}">${esc(e.group)}</option>`).join('')}</datalist>
+    </label>
+    <fieldset>
+      <legend>Wiederholungen</legend>
+      <div class="segmented full">
+        <label><input type="radio" name="repsChoice" value="1" ${choice === '1' ? 'checked' : ''}>1RM</label>
+        <label><input type="radio" name="repsChoice" value="3" ${choice === '3' ? 'checked' : ''}>3RM</label>
+        <label><input type="radio" name="repsChoice" value="x" ${choice === 'x' ? 'checked' : ''}>Andere</label>
+      </div>
+    </fieldset>
+    <div class="row">
+      <label class="field reps-custom"><span>Wiederholungen</span><input type="number" name="repsCustom" inputmode="numeric" min="1" max="30" value="${choice === 'x' ? reps : 5}"></label>
+      <label class="field"><span>Gewicht (kg)</span><input type="number" name="kg" inputmode="decimal" step="0.5" min="1" max="500" value="${esc(preset.kg ?? '')}" required placeholder="100"></label>
+      <label class="field"><span>Datum</span><input type="date" name="date" value="${esc(preset.date || todayISO())}" max="${todayISO()}" required></label>
+    </div>
+    <label class="field"><span>Notiz <em>optional</em></span><input name="note" maxlength="80" placeholder="z.B. mit Gürtel, Wettkampf"></label>
+    <div class="sheet-spacer"></div>
+  </form>`);
+}
+
+/** Save a rep max; unknown exercise names become custom exercises. */
+function saveRecord({ name, exId, reps, kg, date, note }) {
+  const p = profile();
+  let exercise = exId ? catalog(p).find((e) => e.id === exId) : catalog(p).find((e) => e.name.toLowerCase() === name.toLowerCase());
+  const isNew = !exercise;
+  if (!exercise) exercise = { id: `c_${slug(name)}`, name, group: 'Eigene' };
+  const best = bestRecord(p.records, exercise.id, reps);
+  const record = JSON.parse(JSON.stringify({ id: uid('r'), exId: exercise.id, name: exercise.name, reps, kg, date, note: note || undefined }));
+  return saveProfile((prof) => ({
+    ...prof,
+    records: [...prof.records, record],
+    customExercises: isNew && !prof.customExercises.some((c) => c.id === exercise.id) ? [...prof.customExercises, exercise] : prof.customExercises,
+  }), !best || kg > best.kg ? `🏆 Neuer Bestwert: ${exercise.name} ${reps}RM ${fmtKg(kg)}` : 'Eintrag gespeichert');
+}
+
+function submitRecord(form) {
+  const fd = new FormData(form);
+  const name = fd.get('exercise').trim();
+  const reps = fd.get('repsChoice') === 'x' ? Math.round(Number(fd.get('repsCustom'))) : Number(fd.get('repsChoice'));
+  const kg = Number(fd.get('kg'));
+  const missing = [[!name, 'exercise', 'Übung'], [!(kg > 0), 'kg', 'Gewicht'], [!(reps >= 1 && reps <= 30), 'repsCustom', 'Wiederholungen'], [!fd.get('date'), 'date', 'Datum']].filter(([bad]) => bad);
+  if (missing.length) {
+    missing.forEach(([, k]) => form.elements[k].setAttribute('aria-invalid', 'true'));
+    toast(`Bitte ${missing.map(([, , l]) => l).join(', ')} angeben.`, 'error');
+    return null;
+  }
+  sheet.close();
+  return saveRecord({ name, reps, kg, date: fd.get('date'), note: fd.get('note').trim() });
 }
 
 // ───────────────────────── workflows (sync / coach) ─────────────────────────
@@ -1045,7 +1410,7 @@ function render(transition = false) {
     } else {
       view.innerHTML = ROUTES[state.route].render();
     }
-    document.title = `${ROUTES[state.route].title} · Healthy Football`;
+    document.title = `${ROUTES[state.route].title} · ${APP_NAME}`;
     $('#topbar-title').textContent = ROUTES[state.route].title;
     document.querySelectorAll('[data-route]').forEach((el) => {
       if (el.dataset.route === state.route) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
@@ -1068,12 +1433,23 @@ function renderStatus() {
 }
 
 function navigate() {
-  const route = location.hash.replace(/^#\/?/, '') || 'heute';
-  const changed = route !== state.route;
-  state.route = ROUTES[route] ? route : 'heute';
-  render(changed);
+  let path = location.hash.replace(/^#\/?/, '') || 'heute';
+  if (ROUTE_ALIASES[path]) {
+    path = ROUTE_ALIASES[path];
+    history.replaceState(null, '', `#/${path}`);
+  }
+  const [route, sub = ''] = path.split('/');
+  const next = ROUTES[route] ? route : 'heute';
+  const nextSub = next === 'verlauf' && HISTORY_TABS[sub] ? sub : '';
+  const changed = next !== state.route || nextSub !== state.sub;
+  state.route = next;
+  state.sub = nextSub;
+  if (sheet.open) sheet.close();
+  render(changed && booted); // no cross-fade on the very first paint
+  booted = true;
   if (changed) scrollTo({ top: 0 });
 }
+let booted = false;
 
 async function reload() {
   try {
@@ -1095,11 +1471,10 @@ function applyTheme() {
 function buildNav() {
   const link = (r, cls) => `<a href="#/${r}" data-route="${r}" class="${cls}">${icon(ROUTES[r].icon, 22)}<span>${ROUTES[r].title}</span></a>`;
   $('#side-nav').innerHTML = Object.keys(ROUTES).map((r) => link(r, 'nav-link')).join('');
-  $('#tabbar').innerHTML = `${link('heute', 'tab')}${link('aktivitaeten', 'tab')}
-    <button class="fab" data-action="add" aria-label="Training erfassen">${icon('plus', 26)}</button>
-    ${link('coach', 'tab')}${link('trends', 'tab')}`;
-  $('#topbar-actions').innerHTML = `<button class="icon-btn" data-action="sync" aria-label="Garmin synchronisieren">${icon('refresh')}</button>
-    <a class="icon-btn" href="#/einstellungen" data-route="einstellungen" aria-label="Einstellungen">${icon('settings')}</a>`;
+  // tabs navigate, actions live in the toolbar (tab-bars.md › Best practices)
+  $('#tabbar').innerHTML = Object.keys(ROUTES).map((r) => link(r, 'tab')).join('');
+  $('#topbar-actions').innerHTML = `<button class="icon-btn glass" data-action="sync" aria-label="Garmin synchronisieren">${icon('refresh')}</button>
+    <button class="icon-btn glass prominent" data-action="add" aria-label="Training erfassen">${icon('plus')}</button>`;
   $('#side-add').innerHTML = `${icon('plus', 18)}<span>Training erfassen</span>`;
 }
 
@@ -1137,6 +1512,33 @@ const actions = {
     const block = el.closest('.ex-block');
     block.querySelector('.sets').innerHTML = JSON.parse(el.dataset.sets).map((s) => setRow(s, block.dataset.exUnit)).join('');
   },
+  'edit-goals': () => openGoalsForm(),
+  'add-fixed': (el) => openFixedForm(null, el.dataset.kind),
+  'edit-fixed': (el) => { const f = findFixed(el.dataset.id); if (f) openFixedForm(f); },
+  'delete-fixed': (el) => {
+    const { id, list } = el.dataset;
+    if (!confirm('Diesen Termin löschen?')) return;
+    sheet.close();
+    saveProfile((p) => ({ ...p, schedule: { ...p.schedule, [list]: p.schedule[list].filter((x) => x.id !== id) } }), 'Termin gelöscht');
+  },
+  'clear-schedule-note': () => saveProfile((p) => { const { scheduleNote, ...rest } = p; return rest; }, 'Notiz entfernt'),
+  'add-record': (el) => {
+    const ex = el.dataset.ex && catalog(profile()).find((e) => e.id === el.dataset.ex);
+    const name = ex?.name || recordsByExercise(profile().records).get(el.dataset.ex)?.name;
+    openRecordForm(name ? { name } : {});
+  },
+  'open-record': (el) => openRecordDetail(el.dataset.ex),
+  'accept-record': (el) => {
+    const d = el.dataset;
+    saveRecord({ exId: d.ex, name: d.name, reps: Number(d.reps), kg: Number(d.kg), date: d.date, note: 'aus Training übernommen' });
+  },
+  'delete-record': (el) => {
+    const r = profile().records.find((x) => x.id === el.dataset.id);
+    if (!r || !confirm(`${r.name} ${r.reps}RM ${fmtKg(r.kg)} vom ${fmtDate(r.date)} löschen?`)) return;
+    const left = profile().records.filter((x) => x.exId === r.exId && x.id !== r.id).length;
+    saveProfile((p) => ({ ...p, records: p.records.filter((x) => x.id !== r.id) }), 'Eintrag gelöscht')
+      .then(() => { if (left) openRecordDetail(r.exId); else sheet.close(); });
+  },
   'add-target': () => $('#goals-form .targets').insertAdjacentHTML('beforeend', targetRow()),
   'remove-target': (el) => el.closest('.target-row').remove(),
   'remove-exercise': (el) => {
@@ -1151,7 +1553,7 @@ const actions = {
   },
   export: () => {
     const blob = new Blob([JSON.stringify(state.data, null, 1)], { type: 'application/json' });
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `healthy-football-${todayISO()}.json` });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `pulse-coach-${todayISO()}.json` });
     a.click();
     URL.revokeObjectURL(a.href);
   },
@@ -1168,6 +1570,8 @@ const forms = {
   'cfg-form': submitConfig,
   'profile-form': submitProfile,
   'goals-form': submitGoals,
+  'fixed-form': submitFixed,
+  'record-form': submitRecord,
   'nutrition-form': submitNutrition,
   'exercise-form': submitExercise,
   'ask-form': (form) => {
@@ -1185,6 +1589,7 @@ document.addEventListener('submit', (e) => {
 });
 document.addEventListener('input', (e) => {
   if (e.target.getAttribute?.('aria-invalid')) e.target.removeAttribute('aria-invalid');
+  if (e.target.type === 'range') paintRanges(e.target.parentElement);
   if (e.target.id === 'act-search') {
     state.actQuery = e.target.value;
     const pos = e.target.selectionStart;
@@ -1197,9 +1602,21 @@ document.addEventListener('input', (e) => {
     const v = Number(e.target.value);
     $('#rpe-out').textContent = v ? `${v} · ${RPE_LABELS[v]}` : 'nicht bewertet';
   }
+  if (e.target.name?.startsWith('w_')) {
+    const label = WEIGHT_LABELS[Number(e.target.value)];
+    $(`output[data-for="${e.target.name}"]`).textContent = label;
+    e.target.setAttribute('aria-valuetext', label);
+  }
 });
 document.addEventListener('change', (e) => {
   if (e.target.dataset.pref) store.savePrefs({ [e.target.dataset.pref]: e.target.checked });
+  if (e.target.dataset.module) {
+    const { module } = e.target.dataset;
+    const on = e.target.checked;
+    // switching the module on also makes football pickable when the user narrowed their sports list
+    const sports = (p) => (on && p.sports?.length && !p.sports.includes('football') ? [...p.sports, 'football'] : p.sports);
+    saveProfile((p) => ({ ...p, sports: sports(p), modules: { ...p.modules, [module]: on } }), on ? 'Fussball-Modul aktiviert' : 'Fussball-Modul ausgeschaltet');
+  }
   if (e.target.id === 'trend-ex') { state.trendExercise = e.target.value; render(); }
   // picking a suggestion from the exercise list adds it right away
   if (e.target.id === 'ex-search' && catalog(profile()).some((x) => x.name.toLowerCase() === e.target.value.trim().toLowerCase())) addExercise();
@@ -1209,6 +1626,30 @@ document.addEventListener('keydown', (e) => {
 });
 // close the sheet when tapping the backdrop
 sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.close(); });
+
+// swipe down on the grabber or header to dismiss the sheet (sheets.md › "Support swiping to dismiss a sheet")
+let drag = null;
+sheet.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' || !matchMedia('(max-width: 640px)').matches) return;
+  if (!e.target.closest('.sheet-bar, .sheet-head') || e.target.closest('button, input, a')) return;
+  if (sheet.scrollTop > 0) return;
+  drag = { y: e.clientY, dy: 0 };
+  sheet.style.transition = 'none';
+});
+sheet.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  drag.dy = Math.max(0, e.clientY - drag.y);
+  sheet.style.translate = `0 ${drag.dy}px`;
+});
+const endDrag = () => {
+  if (!drag) return;
+  sheet.style.transition = '';
+  sheet.style.translate = '';
+  if (drag.dy > 110) sheet.close();
+  drag = null;
+};
+sheet.addEventListener('pointerup', endDrag);
+sheet.addEventListener('pointercancel', endDrag);
 
 let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
@@ -1223,6 +1664,10 @@ async function init() {
   initTooltip();
   if (store.importSetupFromHash()) toast('Gerät verbunden');
   if (store.isLive()) state.data = store.cached();
+  // compact nav bar title and scroll edge effect once the large title scrolls away
+  const onScroll = () => document.body.classList.toggle('scrolled', scrollY > 44);
+  addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
   window.addEventListener('hashchange', navigate);
   navigate();
   await reload();

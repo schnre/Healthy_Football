@@ -1,20 +1,21 @@
 {
-  "name": "Healthy Football",
-  "short_name": "HealthyFB",
-  "description": "Trainings-Dashboard für Laufen und Fussball mit Garmin-Sync und KI-Coach",
+  "name": "Pulse Coach",
+  "short_name": "Pulse Coach",
+  "description": "Persönlicher Trainings-Coach mit Garmin-Sync, Wochenplan und KI-Analyse",
   "lang": "de-CH",
   "start_url": "./#/heute",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0c0e11",
-  "theme_color": "#0c0e11",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" }
   ],
   "shortcuts": [
-    { "name": "Training erfassen", "url": "./#/aktivitaeten" },
-    { "name": "Coach", "url": "./#/coach" }
+    { "name": "Plan", "url": "./#/plan" },
+    { "name": "Coach", "url": "./#/coach" },
+    { "name": "Bestwerte", "url": "./#/verlauf/bestwerte" }
   ]
 }

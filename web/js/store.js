@@ -4,7 +4,7 @@ import { demoData } from './demo.js';
 
 const CFG_KEY = 'hf.config';
 const CACHE_KEY = 'hf.cache';
-const DEMO_KEY = 'hf.demo';
+const DEMO_KEY = 'hf.demo.v2'; // v2: Pulse Coach demo (no football)
 const PREFS_KEY = 'hf.prefs';
 const API = 'https://api.github.com';
 
@@ -34,7 +34,7 @@ export function disconnect() {
   localStorage.removeItem(CFG_KEY);
   localStorage.removeItem(CACHE_KEY);
 }
-export function resetDemo() { localStorage.removeItem(DEMO_KEY); }
+export function resetDemo() { localStorage.removeItem(DEMO_KEY); localStorage.removeItem('hf.demo'); }
 
 // ── GitHub REST helpers ──
 async function gh(path, { method = 'GET', body, accept = 'application/vnd.github+json' } = {}) {

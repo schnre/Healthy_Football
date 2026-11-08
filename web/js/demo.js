@@ -10,14 +10,22 @@ function rng(seed) {
 
 const kg = (v) => Math.round(v / 2.5) * 2.5;
 const sets = (n, reps, weight) => Array.from({ length: n }, () => (weight ? { kg: weight, reps } : { reps }));
-// weekly leg & core session with slow, realistic progression
-function strengthSession(progress) {
+// weekly lower-body session with slow, realistic progression
+function legSession(progress) {
   return [
-    { id: 'squat', name: 'Kniebeuge (Langhantel)', group: 'Beine', sets: sets(3, 5, kg(70 + progress * 15)) },
-    { id: 'romanian_deadlift', name: 'Rumänisches Kreuzheben', group: 'Gesäss & Hüfte', sets: sets(3, 8, kg(60 + progress * 12)) },
-    { id: 'bulgarian_split_squat', name: 'Bulgarian Split Squat', group: 'Beine', sets: sets(3, 8, kg(12 + progress * 6)) },
-    { id: 'nordic_curl', name: 'Nordic Hamstring Curls', group: 'Prävention & Sprung', sets: sets(3, Math.round(4 + progress * 3)) },
-    { id: 'copenhagen', name: 'Copenhagen Plank', group: 'Prävention & Sprung', unit: 's', sets: sets(2, Math.round(20 + progress * 15)) },
+    { id: 'squat', name: 'Back Squat (Kniebeuge)', group: 'Beine', sets: sets(3, 5, kg(80 + progress * 15)) },
+    { id: 'romanian_deadlift', name: 'Rumänisches Kreuzheben', group: 'Gesäss & Hüfte', sets: sets(3, 8, kg(65 + progress * 12)) },
+    { id: 'bulgarian_split_squat', name: 'Bulgarian Split Squat', group: 'Beine', sets: sets(3, 8, kg(14 + progress * 6)) },
+    { id: 'plank', name: 'Unterarmstütz (Plank)', group: 'Rumpf', unit: 's', sets: sets(3, Math.round(40 + progress * 20)) },
+  ];
+}
+// Saturday: Olympic lifting + pulling
+function liftSession(progress, heavy) {
+  return [
+    { id: 'power_clean', name: 'Power Clean', group: 'Gewichtheben', sets: heavy ? [{ kg: kg(70 + progress * 8), reps: 3 }, { kg: kg(75 + progress * 8), reps: 3 }, { kg: kg(80 + progress * 7.5), reps: 1 }] : sets(5, 3, kg(65 + progress * 8)) },
+    { id: 'deadlift', name: 'Deadlift (Kreuzheben)', group: 'Gesäss & Hüfte', sets: sets(3, 5, kg(110 + progress * 15)) },
+    { id: 'pull_up', name: 'Klimmzüge', group: 'Rücken', sets: sets(3, Math.round(6 + progress * 3)) },
+    { id: 'push_press', name: 'Push Press', group: 'Gewichtheben', sets: sets(3, 5, kg(50 + progress * 7.5)) },
   ];
 }
 
@@ -36,14 +44,14 @@ export function demoData() {
 
     if ([0, 3, 6].includes(dow) && back > 0) {
       const kind = dow === 0 ? 'easy' : dow === 3 ? 'tempo' : 'long';
-      const km = kind === 'long' ? jitter(12 + progress * 4, 1.5) : kind === 'tempo' ? jitter(8, 1) : jitter(6.5, 1);
-      const pace = (kind === 'tempo' ? 285 : kind === 'long' ? 330 : 345) - progress * 15 + jitter(0, 8);
+      const km = kind === 'long' ? jitter(11 + progress * 4, 1.5) : kind === 'tempo' ? jitter(8, 1) : jitter(6.5, 1);
+      const pace = (kind === 'tempo' ? 290 : kind === 'long' ? 335 : 350) - progress * 15 + jitter(0, 8);
       const dur = (km * pace) / 60;
       const hr = kind === 'tempo' ? jitter(166, 4) : jitter(146, 5);
       garminActs.push({
         id: `gdemo${back}`, source: 'garmin', type: 'run', garminType: 'running',
-        title: kind === 'tempo' ? 'Tempolauf' : kind === 'long' ? 'Langer Lauf' : 'Lockerer Lauf',
-        date, start: `${date}T${kind === 'long' ? '09:30' : '18:15'}:00`,
+        title: kind === 'tempo' ? 'Lauftreff Tempo' : kind === 'long' ? 'Langer Lauf' : 'Lockerer Lauf',
+        date, start: `${date}T${kind === 'long' ? '09:30' : '18:30'}:00`,
         durationMin: Math.round(dur * 10) / 10, distanceKm: Math.round(km * 100) / 100,
         paceSecPerKm: Math.round(pace), avgHr: Math.round(hr), maxHr: Math.round(hr + 14),
         calories: Math.round(km * 68), elevationGain: Math.round(jitter(60, 30)),
@@ -54,38 +62,35 @@ export function demoData() {
         hrZonesMin: kind === 'tempo' ? [4, 8, 10, 18, 3].map((m) => Math.round(m * dur / 43)) : [6, 22, 10, 2, 0].map((m) => Math.round(m * dur / 40)),
       });
     }
-    if ([1, 3].includes(dow) && back > 0) {
+    if (dow === 1 && back > 0) {
       manualActs.push({
-        id: `mdemo${back}`, source: 'manual', type: 'football', title: 'Mannschaftstraining',
-        date, start: `${date}T19:30:00`, durationMin: 90, avgHr: Math.round(jitter(148, 5)),
-        rpe: Math.round(jitter(6, 1)), feeling: Math.round(jitter(4, 1)),
-        football: { kind: 'training' }, notes: dow === 1 ? 'Viel Spielform, Pressing' : 'Technik + Abschluss',
-      });
-    }
-    if (dow === 5 && back > 0) {
-      const opponents = ['FC Seefeld', 'SC Wipkingen', 'FC Unterstrass', 'SV Höngg', 'FC Oerlikon', 'Blue Stars'];
-      manualActs.push({
-        id: `mdemo${back}`, source: 'manual', type: 'football', title: `Match vs. ${opponents[back % opponents.length]}`,
-        date, start: `${date}T15:00:00`, durationMin: Math.round(jitter(80, 10)), avgHr: Math.round(jitter(158, 4)),
-        rpe: Math.round(jitter(8, 1)), feeling: Math.round(jitter(4, 1)),
-        football: { kind: 'match', opponent: opponents[back % opponents.length], result: `${Math.floor(rand() * 4)}:${Math.floor(rand() * 3)}`, minutesPlayed: 80, goals: rand() > 0.75 ? 1 : 0, assists: rand() > 0.7 ? 1 : 0 },
-        notes: '',
+        id: `mdemo${back}`, source: 'manual', type: 'hiit', title: 'Functional-Kurs',
+        date, start: `${date}T19:00:00`, durationMin: 60, avgHr: Math.round(jitter(150, 5)),
+        rpe: Math.round(jitter(7, 1)), feeling: Math.round(jitter(4, 1)), notes: back % 14 < 7 ? 'Viel Rudern und Burpees' : 'Kettlebell-Zirkel',
       });
     }
     if (dow === 2 && back > 0) {
       garminActs.push({
         id: `gdemos${back}`, source: 'garmin', type: 'strength', garminType: 'strength_training',
-        title: 'Krafttraining Beine & Core', date, start: `${date}T07:00:00`, durationMin: Math.round(jitter(50, 8)),
+        title: 'Kraft Beine & Rumpf', date, start: `${date}T07:00:00`, durationMin: Math.round(jitter(55, 8)),
         avgHr: Math.round(jitter(118, 6)), calories: Math.round(jitter(320, 40)), trainingLoad: Math.round(jitter(45, 10)),
-        exercises: strengthSession(progress),
+        exercises: legSession(progress),
+      });
+    }
+    if (dow === 5 && back > 0) {
+      manualActs.push({
+        id: `mdemol${back}`, source: 'manual', type: 'strength', title: 'Gewichtheben & Zug',
+        date, start: `${date}T10:00:00`, durationMin: Math.round(jitter(65, 8)), avgHr: Math.round(jitter(124, 5)),
+        rpe: Math.round(jitter(7, 1)), feeling: Math.round(jitter(4, 1)),
+        exercises: liftSession(progress, back < 8), notes: back < 8 ? 'Power Clean schwer – fühlte sich schnell an' : '',
       });
     }
 
     const load = back % 7 === 1 ? 1 : 0;
     daily.push({
       date,
-      restingHr: Math.round(jitter(51 - progress * 2 + load * 2, 1.5)),
-      hrv: Math.round(jitter(60 + progress * 5 - load * 6, 5)),
+      restingHr: Math.round(jitter(52 - progress * 2 + load * 2, 1.5)),
+      hrv: Math.round(jitter(58 + progress * 5 - load * 6, 5)),
       hrvStatus: 'BALANCED',
       sleepH: Math.round(jitter(7.3, 0.7) * 100) / 100,
       sleepScore: Math.round(jitter(78, 9)),
@@ -99,21 +104,36 @@ export function demoData() {
     });
   }
 
-  // one template per weekday (0 = Monday), matching the demo training rhythm
+  // a "no time" day 2–6 days ahead that does not clash with the weekly appointments (Tue, Thu)
+  const blockedDay = [2, 3, 4, 5, 6].map((i) => addDays(today, i)).find((d) => ![1, 3].includes((parseDay(d).getDay() + 6) % 7));
+  // one template per weekday (0 = Monday); fixed = the user's fixed appointment, filled in by the coach
   const week = [
-    ['strength', 'Kraft Beine & Rumpf', 50, 'mittel', 'Kniebeuge 3×5 @ 85 kg, Rumänisches Kreuzheben 3×8 @ 72.5 kg, Nordic Curls 3×7, Copenhagen Plank 2×35 s.', 'Danach Protein + Kohlenhydrate, z.B. Quark mit Haferflocken und Beeren.'],
-    ['football', 'Mannschaftstraining', 90, 'mittel', 'Fester Termin. Im Aufwärmen 4 Steigerungsläufe über 60 m.', '2–3 h vorher normale, kohlenhydratbetonte Mahlzeit; danach innerhalb von 1–2 h Protein essen.'],
-    ['run', 'Intervalle 6×800 m', 55, 'hart', '15′ einlaufen, 6×800 m @ 4:05/km mit 2′ Trabpause, 10′ auslaufen.', 'Vorher leicht verdauliche Kohlenhydrate, wenig Fett und Ballaststoffe (z.B. Banane, Toast mit Honig).'],
-    ['football', 'Mannschaftstraining', 90, 'mittel', 'Fester Termin. Nach dem Training 3×5 Nordic Hamstring Curls.', 'Genug trinken über den Tag; nach dem Training Protein + Kohlenhydrate.'],
-    ['rest', 'Ruhetag vor dem Match', 0, 'Ruhe', 'Spaziergang, früh schlafen.', 'Kohlenhydratspeicher füllen: Pasta, Reis, Kartoffeln zu jeder Mahlzeit, am Abend wenig Fett und Ballaststoffe.'],
-    ['football', 'Match', 90, 'hart', 'Dynamisches Aufwärmen 20′. Nach dem Spiel 10′ auslaufen.', '3–4 h vor Anpfiff kohlenhydratreiche Mahlzeit, in der Halbzeit etwas Schnelles (Banane, Sportgetränk), danach Protein + Kohlenhydrate.'],
-    ['mobility', 'Mobility & langer Spaziergang', 45, 'locker', '15′ Hüft- und Sprunggelenk-Mobility, 3×10 Glute Bridges, danach 30′ Spaziergang.', 'Regenerationstag: ausgewogen essen, Protein auf alle Mahlzeiten verteilen.'],
+    [{ type: 'run', title: 'Lockerer Lauf', durationMin: 40, intensity: 'locker', details: '7 km bei 5:40–5:50/km, Puls unter 145. Danach 4 Steigerungsläufe.', nutrition: 'Normal essen, Protein auf alle Mahlzeiten verteilen.' }],
+    [{ type: 'hiit', title: 'Functional-Kurs', durationMin: 60, intensity: 'hart', fixed: true, details: 'Fixtermin. Bei Sprüngen und Burpees sauber bleiben – morgen früh ist Kraft dran.', nutrition: '2–3 h vorher eine kohlenhydratbetonte Mahlzeit.' }],
+    [{ type: 'strength', title: 'Kraft Beine', durationMin: 55, intensity: 'mittel', details: 'Back Squat 3×5 @ 80 % (80 kg), Rumänisches Kreuzheben 3×8 @ 75 kg, Bulgarian Split Squat 3×8 @ 20 kg.', nutrition: 'Danach Protein + Kohlenhydrate, z.B. Quark mit Haferflocken und Beeren.' }],
+    [{ type: 'run', title: 'Lauftreff', durationMin: 60, intensity: 'hart', fixed: true, details: 'Fixtermin. Ziel: 3×10′ bei 4:35/km (Schwelle), 2′ Trabpause.', nutrition: 'Vorher leicht Verdauliches, z.B. Banane oder Toast mit Honig.' }],
+    [],
+    [{ type: 'strength', title: 'Gewichtheben & Zug', durationMin: 65, intensity: 'hart', details: 'Power Clean 5×2 @ 80 % (68 kg), Deadlift 3×3 @ 85 % (115 kg), Klimmzüge 3×8.', nutrition: 'Am Morgen kohlenhydratreich frühstücken, danach Protein.' }],
+    [{ type: 'run', title: 'Langer Lauf', durationMin: 85, intensity: 'locker', details: '14 km bei 5:35/km, die letzten 2 km etwas zügiger.', nutrition: 'Bei über 75 Minuten unterwegs trinken; danach Kohlenhydrate + Protein.' },
+      { type: 'mobility', title: 'Mobility', durationMin: 15, intensity: 'locker', details: 'Hüfte und Sprunggelenk, 2×10 Glute Bridges.' }],
   ];
   const plan = Array.from({ length: 7 }, (_, i) => {
     const date = addDays(today, i);
-    const [type, title, durationMin, intensity, details, nutrition] = week[(parseDay(date).getDay() + 6) % 7];
-    return { date, type, title, durationMin, intensity, details, nutrition };
-  });
+    if (date === blockedDay) return [{ date, type: 'rest', title: 'Ruhetag (keine Zeit)', durationMin: 0, intensity: 'Ruhe', fixed: false, details: 'Geschäftsreise – nutze den Tag zur Erholung, 8 h Schlaf einplanen.', nutrition: 'Ausgewogen essen, genug trinken.' }];
+    const items = week[(parseDay(date).getDay() + 6) % 7];
+    return (items.length ? items : [{ type: 'rest', title: 'Ruhetag', durationMin: 0, intensity: 'Ruhe', details: 'Spaziergang, früh schlafen.', nutrition: 'Ausgewogen essen.' }])
+      .map((x) => ({ date, fixed: false, ...x }));
+  }).flat();
+
+  const rec = (id, exId, name, reps, weight, daysAgo) => ({ id, exId, name, reps, kg: weight, date: addDays(today, -daysAgo) });
+  const records = [
+    rec('r1', 'squat', 'Back Squat (Kniebeuge)', 1, 95, 120), rec('r2', 'squat', 'Back Squat (Kniebeuge)', 1, 100, 60), rec('r3', 'squat', 'Back Squat (Kniebeuge)', 1, 105, 9),
+    rec('r4', 'squat', 'Back Squat (Kniebeuge)', 3, 90, 60), rec('r5', 'squat', 'Back Squat (Kniebeuge)', 3, 95, 16),
+    rec('r6', 'deadlift', 'Deadlift (Kreuzheben)', 1, 130, 90), rec('r7', 'deadlift', 'Deadlift (Kreuzheben)', 1, 135, 30),
+    rec('r8', 'deadlift', 'Deadlift (Kreuzheben)', 5, 120, 23),
+    rec('r9', 'snatch', 'Snatch', 1, 55, 70), rec('r10', 'snatch', 'Snatch', 1, 60, 12),
+    rec('r11', 'power_clean', 'Power Clean', 3, 75, 40),
+  ];
 
   return {
     garmin: {
@@ -122,54 +142,58 @@ export function demoData() {
       daily,
       snapshot: {
         readiness: { score: 74, level: 'HIGH', feedback: 'Gut erholt', recoveryTimeH: 6 },
-        trainingStatus: { phrase: 'PRODUCTIVE', acuteLoad: 612, chronicLoad: 540, acwr: 1.13 },
-        vo2max: 54.6, fitnessAge: 24,
-        racePredictions: { '5k': 1238, '10k': 2598, half: 5790, marathon: 12420 },
-        lactateThreshold: { heartRate: 171, paceSecPerKm: 268 },
+        trainingStatus: { phrase: 'PRODUCTIVE', acuteLoad: 560, chronicLoad: 510, acwr: 1.1 },
+        vo2max: 52.1, fitnessAge: 26,
+        racePredictions: { '5k': 1290, '10k': 2700, half: 6010, marathon: 12900 },
+        lactateThreshold: { heartRate: 170, paceSecPerKm: 275 },
       },
     },
     manual: { activities: manualActs.reverse(), annotations: {} },
     profile: {
-      name: '', age: 28, position: 'Zentrales Mittelfeld', level: 'Amateur (4. Liga)',
-      trainingDays: 5, weightKg: 74, injuries: 'Leichte Achillessehnen-Reizung rechts im Frühling', maxHr: 194,
-      sports: ['run', 'football', 'strength', 'mobility'],
-      schedule: 'Training Di + Do 19:30, Match Sa',
+      name: '', age: 31, trainingDays: 5, weightKg: 78, injuries: 'Leichte Achillessehnen-Reizung rechts im Frühling', maxHr: 190,
+      sports: ['run', 'strength', 'hiit', 'mobility', 'cycle'],
+      modules: { football: false },
+      schedule: {
+        recurring: [
+          { id: 'fdemo1', weekday: 2, time: '19:00', durationMin: 60, type: 'hiit', title: 'Functional-Kurs' },
+          { id: 'fdemo2', weekday: 4, time: '18:30', durationMin: 60, type: 'run', title: 'Lauftreff' },
+        ],
+        once: [{ id: 'fdemo3', date: blockedDay, kind: 'blocked', title: 'Geschäftsreise' }],
+      },
       goals: {
-        main: 'endurance', secondary: ['match_fitness', 'injury_prevention'], phase: 'season',
-        targets: [{ text: '10 km unter 42:00', date: '' }, { text: 'Kniebeuge 3×5 mit 90 kg', date: '' }],
-        notes: 'Im Match bis zur 90. Minute pressen können.',
+        weights: { strength: 4, endurance: 3, mobility: 2 },
+        targets: [{ text: '10 km unter 45:00', date: addDays(today, 70) }, { text: 'Back Squat 1RM 110 kg', date: '' }],
+        notes: 'Ich will stärker werden – vor allem Back Squat und Deadlift – und trotzdem 10 km unter 45 Minuten laufen.',
       },
       nutrition: { enabled: true, diet: 'Alles', intolerances: '' },
       customExercises: [],
+      records,
     },
     insights: {
       generatedAt: new Date(Date.now() - 3 * 3600000).toISOString(),
       model: 'claude-opus-5-5 (Demo)',
-      trigger: 'garmin-sync',
+      trigger: 'button',
       analysis: {
-        summary: 'Deine Form zeigt klar nach oben: Die Pace deiner lockeren Läufe ist in 12 Wochen um rund 15 s/km schneller geworden – bei gleichem Puls. Mit drei Läufen, zwei Trainings und einem Match pro Woche liegst du an der oberen Grenze dessen, was du gut verkraftest. HRV und Ruhepuls sind stabil, du bist bereit für eine harte Einheit.',
-        readiness: { score: 78, label: 'Bereit für Tempo', reasoning: 'HRV über deinem 3-Wochen-Schnitt (66 vs. 62 ms), Ruhepuls bei 49, Schlaf 7.4 h. Die letzte harte Belastung (Match) liegt 3 Tage zurück.' },
-        load: { status: 'optimal', comment: 'ACWR 1.13 – du steigerst dich kontrolliert. Halte den Wochenumfang diese Woche konstant, bevor du den langen Lauf weiter verlängerst.' },
-        focus: [{ area: '🏃 Ausdauer', tips: [
-          { title: 'Ein Qualitätslauf pro Woche reicht', detail: 'Neben zwei Fussballtrainings ist ein harter Lauf (Intervalle oder Schwelle) optimal. Dein Tempolauf am Donnerstag kollidiert mit dem Training – verschiebe ihn auf Mittwoch.', priority: 'hoch' },
-          { title: 'Schwellentempo bei 4:28/km', detail: 'Deine Laktatschwelle liegt bei 171 bpm bzw. 4:28/km. 3×10\' in diesem Bereich bauen genau die Ausdauer für die 10 km unter 42 Minuten auf.', priority: 'mittel' },
-          { title: 'Lockere Läufe wirklich locker', detail: 'Dein Ø-Puls bei lockeren Läufen liegt bei 146 bpm – Ziel: unter 145. Das spart Energie für die harten Tage.', priority: 'niedrig' },
-        ] }, { area: '⚽ Matchfitness', tips: [
-          { title: 'Wiederholungssprints einbauen', detail: '1×/Woche 2 Serien à 6×30 m Sprint mit 20" Pause. Das trainiert genau die Belastung im Pressing in der Schlussphase.', priority: 'hoch' },
-          { title: 'Nordic Curls gegen Zerrungen', detail: '2×/Woche 3×5 Nordic Hamstring Curls senkt das Risiko für Oberschenkelzerrungen nachweislich – ideal nach dem Training.', priority: 'mittel' },
-        ] }, { area: '🏋️ Kraft & Prävention', tips: [
-          { title: 'Kniebeuge weiter steigern', detail: 'Deine Kniebeuge ist in 12 Wochen von 70 auf 85 kg (3×5) gestiegen. Erhöhe um 2.5 kg pro Woche, solange alle Wiederholungen sauber gelingen – das Ziel 90 kg ist in 2–3 Wochen realistisch.', priority: 'mittel' },
-          { title: 'Kraft nicht vor Matchtagen', detail: 'Krafttraining früh in der Woche passt gut: genug Abstand zum Match am Samstag. Nie innerhalb von 48 h vor einem Match schwer trainieren.', priority: 'niedrig' },
+        summary: 'Deine Form zeigt klar nach oben: Die Pace der lockeren Läufe ist in 12 Wochen um rund 15 s/km schneller geworden, bei gleichem Puls. Dein Back Squat ist mit 105 kg (1RM) auf Kurs Richtung 110 kg. Mit zwei Kraft-, drei Lauf- und einer Kurseinheit pro Woche liegst du an der oberen Grenze dessen, was du gut verkraftest.',
+        readiness: { score: 78, label: 'Bereit für Tempo', reasoning: 'HRV über deinem 3-Wochen-Schnitt (64 vs. 60 ms), Ruhepuls bei 50, Schlaf 7.4 h. Die letzte harte Einheit liegt 2 Tage zurück.' },
+        load: { status: 'optimal', comment: 'ACWR 1.10 – du steigerst dich kontrolliert. Halte den Wochenumfang konstant, solange die Kraftwerte steigen.' },
+        focus: [{ area: '🏋️ Kraft', tips: [
+          { title: 'Squat in Wellen steigern', detail: 'Arbeite 3 Wochen mit 80 → 82.5 → 85 % deines 1RM (105 kg) für 3×5, dann eine leichte Woche. So ist 110 kg in 6–8 Wochen realistisch.', priority: 'hoch' },
+          { title: 'Deadlift nur 1× pro Woche schwer', detail: 'Mit dem langen Lauf am Sonntag reicht ein schwerer Zugtag. 3×3 @ 85 % (115 kg) am Samstag, sonst nur rumänisches Kreuzheben.', priority: 'mittel' },
+          { title: 'Power Clean vor dem Deadlift', detail: 'Explosive Übungen immer zuerst, wenn du frisch bist. Dein 3RM von 75 kg passt zu einem 1RM von etwa 82 kg.', priority: 'niedrig' },
+        ] }, { area: '🫀 Ausdauer', tips: [
+          { title: 'Ein Qualitätslauf pro Woche reicht', detail: 'Der Lauftreff am Donnerstag ist deine harte Einheit. Montag und Sonntag bleiben locker, damit die Beine fürs Krafttraining frisch sind.', priority: 'hoch' },
+          { title: 'Schwellentempo bei 4:35/km', detail: 'Deine Laktatschwelle liegt bei 170 bpm bzw. 4:35/km. 3×10′ in diesem Bereich bauen genau die Ausdauer für die 10 km unter 45 Minuten auf.', priority: 'mittel' },
         ] }, { area: '😴 Erholung', tips: [
-          { title: 'Schlaf vor Matchtagen', detail: 'Vor deinen letzten zwei Matches hast du unter 7 h geschlafen. Plane am Freitag bewusst 8 h ein.', priority: 'mittel' },
-          { title: 'Achillessehne im Blick behalten', detail: 'Wadenheben exzentrisch 3×15 an 3 Tagen pro Woche. Bei Schmerzen am Morgen das Lauftempo reduzieren und ärztlich abklären lassen.', priority: 'niedrig' },
+          { title: 'Kein Squat nach dem Kurs', detail: 'Zwischen Functional-Kurs (Di Abend) und Beintag (Mi früh) liegen nur 12 h. Wenn die Beine schwer sind, tausch den Beintag auf Freitag.', priority: 'mittel' },
+          { title: 'Achillessehne im Blick behalten', detail: 'Exzentrisches Wadenheben 3×15 an 3 Tagen pro Woche. Bei Schmerzen am Morgen das Lauftempo reduzieren und ärztlich abklären lassen.', priority: 'niedrig' },
         ] }],
         nutrition: {
-          summary: 'Du trainierst fast täglich – Kohlenhydrate sind dein wichtigster Treibstoff, Protein hilft bei der Regeneration.',
+          summary: 'Du willst Kraft aufbauen und schneller laufen – genug Protein und Kohlenhydrate rund um die harten Tage sind dein wichtigster Hebel.',
           tips: [
-            { title: 'Matchtag-Fahrplan', detail: 'Am Vortag und 3–4 h vor dem Anpfiff kohlenhydratreich essen (Pasta, Reis, Brot), wenig Fett und Ballaststoffe. In der Halbzeit etwas Schnelles wie eine Banane.', priority: 'hoch' },
-            { title: 'Protein über den Tag verteilen', detail: 'Bei jeder Hauptmahlzeit eine Proteinquelle (Milchprodukte, Eier, Fleisch, Fisch, Hülsenfrüchte) – besonders in den 1–2 h nach dem Training.', priority: 'mittel' },
-            { title: 'Trinken nicht vergessen', detail: 'Schon vor dem Training gut hydriert sein; bei Einheiten über 60 Minuten oder bei Hitze unterwegs trinken.', priority: 'niedrig' },
+            { title: 'Protein über den Tag verteilen', detail: 'Bei jeder Hauptmahlzeit eine Proteinquelle (Milchprodukte, Eier, Fleisch, Fisch, Hülsenfrüchte) – besonders in den 1–2 h nach dem Krafttraining.', priority: 'hoch' },
+            { title: 'Kohlenhydrate vor dem Lauftreff', detail: '2–3 h vor der harten Einheit kohlenhydratbetont essen, wenig Fett und Ballaststoffe.', priority: 'mittel' },
+            { title: 'Trinken nicht vergessen', detail: 'Bei Einheiten über 60 Minuten oder bei Hitze unterwegs trinken.', priority: 'niedrig' },
           ],
         },
         warnings: [],
@@ -177,7 +201,7 @@ export function demoData() {
         answer: '',
       },
       qa: [
-        { question: 'Soll ich am Tag nach dem Match laufen gehen?', answer: 'Ja, aber nur sehr locker: 30–40 Minuten im Wohlfühltempo (Puls unter 145) fördern die Durchblutung und beschleunigen die Erholung. Wenn deine HRV am Morgen deutlich unter dem Schnitt liegt oder die Beine schwer sind, ersetze den Lauf durch 20 Minuten Velo oder Mobility.', at: new Date(Date.now() - 2 * 86400000).toISOString() },
+        { question: 'Soll ich am Tag nach dem Beintag laufen gehen?', answer: 'Ja, aber nur sehr locker: 30–40 Minuten im Wohlfühltempo (Puls unter 145) fördern die Durchblutung. Wenn deine HRV am Morgen deutlich unter dem Schnitt liegt oder die Beine schwer sind, ersetze den Lauf durch 20 Minuten Velo oder Mobility.', at: new Date(Date.now() - 2 * 86400000).toISOString() },
       ],
       history: [],
     },
